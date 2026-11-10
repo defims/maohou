@@ -99,7 +99,8 @@ pub enum Paint {
     /// Mirrored linear: the gradient reflects back and forth between `start` and `end`
     /// (Moho's reflected gradient; SVG's `spreadMethod="reflect"`).
     Reflected { start: Vec2, end: Vec2, stops: Vec<GradientStop> },
-    /// A sweep around `center`, one full turn from the local +x axis (Moho's angle gradient).
+    /// A sweep around `center`, one full turn starting at 12 o'clock and turning
+    /// anticlockwise on screen (Moho's angle gradient; phase verified against Moho renders).
     Angle { center: Vec2, stops: Vec<GradientStop> },
     /// A bitmap, its pixel (x, y) at local `matrix · (x, y)`; `repeat` tiles it, otherwise it
     /// shows once (an imported image is a rectangle of exactly its size, with no matrix).

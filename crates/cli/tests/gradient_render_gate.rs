@@ -189,19 +189,19 @@ fn four_gradient_types_render_with_their_own_layouts() {
     let centre = mean(&px, lum, strip(2, 0.47, 0.53));
     assert!(centre > 0.9, "reflected centre is the first stop: {centre}");
 
-    // Angle (square 3): the sweep starts at east going up (local +y), so with the
-    // white→black stops the luminance is 1 − t: east 1, north ¾, west ½, south ¼.
-    // Samples sit strictly inside each quadrant so none straddles a sweep line.
+    // Angle (square 3): Moho's sweep starts at 12 o'clock turning anticlockwise on screen,
+    // so with the white→black stops the luminance is 1 − t: north 1, west ¾, south ½,
+    // east ¼. Samples sit strictly inside each quadrant so none straddles a sweep line.
     let (sx, sy) = square(3);
     let (cx, cy) = (sx + 160, sy + 160);
-    let east = mean(&px, lum, (cx + 60, cy - 40, 40, 20));
-    let north = mean(&px, lum, (cx - 20, cy - 100, 40, 20));
+    let north = mean(&px, lum, (cx - 70, cy - 100, 40, 20));
     let west = mean(&px, lum, (cx - 100, cy - 10, 40, 20));
     let south = mean(&px, lum, (cx - 20, cy + 80, 40, 20));
-    assert!(east > 0.9, "angle east = first stop: {east}");
-    assert!((north - 0.75).abs() < 0.1, "angle north = a quarter of the sweep: {north}");
-    assert!((west - 0.5).abs() < 0.1, "angle west = half: {west}");
-    assert!((south - 0.25).abs() < 0.1, "angle south = three quarters: {south}");
+    let east = mean(&px, lum, (cx + 60, cy - 10, 40, 20));
+    assert!(north > 0.9, "angle north = first stop: {north}");
+    assert!((west - 0.75).abs() < 0.1, "angle west = a quarter of the sweep: {west}");
+    assert!((south - 0.5).abs() < 0.1, "angle south = half: {south}");
+    assert!((east - 0.25).abs() < 0.1, "angle east = three quarters: {east}");
     let _ = (w, h);
 }
 

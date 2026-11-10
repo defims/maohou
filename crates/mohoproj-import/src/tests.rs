@@ -209,15 +209,16 @@ fn reflected_and_angle_gradients_import_with_effect_geometry() {
     // Reflected maps to its own paint; through_alpha=false means opaque stops.
     let Some(anicraft_doc::Paint::Reflected { start, end, stops }) = &fill.fill else { panic!("reflected gradient, got {:?}", fill.fill) };
     assert_eq!(stops[0].color.a, 1.0, "through_alpha false makes the stops opaque");
-    // The effect transform turns the axis 90° about the centre, scales it ×2 and shifts it
-    // by 0.25" (all in shape space; the element transform carries the inch→pixel mapping).
+    // The axis runs from the shape's centre (the mirror point) to the left edge, and the
+    // effect transform turns it 90° about the centre, scales it ×2 and shifts it by 0.25"
+    // (all in shape space; the element transform carries the inch→pixel mapping).
     let centre = Vec2::new(0.5, 0.5);
     let expected = |p: Vec2| {
         let q = (p - centre) * 2.0;
         Vec2::new(q.x * 1.5707964_f32.cos() - q.y * 1.5707964_f32.sin(), q.x * 1.5707964_f32.sin() + q.y * 1.5707964_f32.cos()) + centre + Vec2::new(0.25, 0.0)
     };
-    assert!((*start - expected(Vec2::new(0.0, 0.5))).length() < 1e-4, "{start:?}");
-    assert!((*end - expected(Vec2::new(1.0, 0.5))).length() < 1e-4, "{end:?}");
+    assert!((*start - expected(centre)).length() < 1e-4, "{start:?}");
+    assert!((*end - expected(Vec2::new(0.0, 0.5))).length() < 1e-4, "{end:?}");
 }
 
 #[test]
