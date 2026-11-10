@@ -256,16 +256,19 @@ fn flattening_the_gradient_collapses_the_structure() {
 }
 
 /// smartbones.moho: the non-skeleton part is an empty mesh, and Moho renders an empty frame;
-/// our import must agree (the skeleton itself is counted, not drawn — stage 4).
+/// our import must agree. The skeleton imports since stage 4 (ADR 0104) — a rig draws
+/// nothing, so the frame stays empty on both sides.
 #[test]
 fn smartbones_non_skeleton_matches_mohos_frame() {
     let Some(dir) = corpus() else { return eprintln!("skipped: no maop-corpus beside the workspace") };
     let Some(path) = fixture(&dir, "smartbones") else { return };
     let Some(moho) = moho_render(&dir, "smartbones-f1") else { return };
     let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("smartbones.moho: {e}"));
-    // The styles table comes across; the two smart-rig bones are counted for stage 4.
+    // The styles table comes across; the two smart-rig bones import as the rig.
     assert_eq!(doc.styles.len(), 12);
-    assert_eq!(report.skipped.get("skeleton bones"), Some(&2), "{:?}", report.skipped);
+    assert!(!report.skipped.contains_key("skeleton bones"), "{:?}", report.skipped);
+    let rig = doc.timeline(0).layers.iter().find(|l| l.kind == anicraft_doc::LayerKind::Bone).unwrap();
+    assert_eq!(rig.skeleton.as_ref().unwrap().bones.len(), 2);
     let ours = render_ours(&doc);
     let (w, h) = (ours.width, ours.height);
     let ours_content = ours.data.iter().filter(|p| p[3] > 0.05).count();
