@@ -1944,8 +1944,35 @@ fn layer_and_camera_channels_round_trip_in_v5_files() {
     assert_eq!(back, s.doc, "round trip keeps channels, camera, markers and range");
     // And a v4-style file (none of the new keys) still loads as before.
     let mut v4 = crate::format::to_json(&sample::demo()).unwrap();
-    v4 = v4.replace("\"version\":5", "\"version\":4");
+    v4 = v4.replace("\"version\":6", "\"version\":4");
     assert_eq!(crate::format::from_json(&v4).unwrap(), sample::demo());
+}
+
+#[test]
+fn layer_effects_commands_round_trip_in_v6_files() {
+    let mut s = Session::new(sample::demo());
+    let layer = s.layer;
+    s.execute("layer.set_opacity", &json!({"opacity": 0.4})).unwrap();
+    s.execute("layer.set_opacity", &json!({"opacity": 1.0, "at_frame": 10})).unwrap();
+    s.execute("layer.set_filters", &json!({"filters": [{"type": "blur", "blur_x": 3.0, "blur_y": 3.0, "quality": 2}, {"type": "pixelate", "size": 6.0}, {"type": "drop_shadow", "blur_x": 4.0, "blur_y": 4.0, "strength": 1.0, "quality": 1, "angle": 45.0, "distance": 5.0, "color": {"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0}, "inner": false, "knockout": false, "hide_object": false, "expansion": 2.0, "noise": 0.2, "threshold": true}]})).unwrap();
+    // The evaluated layer composites with the opacity and the stack.
+    let dl = anicraft_doc::evaluate_scene(&s.doc, 0, 0);
+    assert_eq!(dl.groups.len(), 1, "opacity + filters wrap the layer");
+    assert!((dl.groups[0].alpha - 0.4).abs() < 1e-6, "frame 0 holds the first key");
+    assert!((anicraft_doc::evaluate_scene(&s.doc, 0, 5).groups[0].alpha - 0.7).abs() < 1e-5, "and the keys interpolate");
+    assert_eq!(dl.groups[0].filters.len(), 3);
+    let text = crate::format::to_json(&s.doc).unwrap();
+    let back = crate::format::from_json(&text).unwrap();
+    assert_eq!(back, s.doc, "round trip keeps opacity and the effect stack");
+    // Wild values are clamped; clearing restores the plain layer.
+    s.execute("layer.set_filters", &json!({"filters": [{"type": "noise", "amount": 9.0}, {"type": "threshold", "level": -2.0}]})).unwrap();
+    let layer_data = s.doc.timeline(0).layer(layer).unwrap();
+    assert_eq!(layer_data.filters[0], anicraft_doc::Filter::Noise { amount: 1.0 });
+    assert_eq!(layer_data.filters[1], anicraft_doc::Filter::Threshold { level: 0.0 });
+    s.execute("layer.clear_filters", &json!({})).unwrap();
+    s.execute("layer.clear_opacity", &json!({})).unwrap();
+    assert!(anicraft_doc::evaluate_scene(&s.doc, 0, 5).groups.is_empty());
+    assert_eq!(crate::format::from_json(&crate::format::to_json(&s.doc).unwrap()).unwrap(), s.doc);
 }
 
 #[test]
