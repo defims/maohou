@@ -98,3 +98,40 @@ a working fixture from Moho itself, as stage 3's gradients-gui.moho did.
   parity plan when those run.
 * A bone editor UI (drawing bones on the stage, posing by drag, per-point weights, bone
   dynamics) stays out of scope here; the command layer and rig math are its foundation.
+
+## Corrections from the live gates (2026-11-11)
+
+The corpus fixtures generated for the gates (bones-bind.moho #16, bones-dial.moho #17,
+both Moho 14.4 via Lua) corrected three readings in this decision, each caught by a pixel
+or analytic gate before it could ship:
+
+1. **A child bone's `pos` is measured in its parent's frame, origin at the parent's
+   *base*** (decision 2 said "off its parent's tip"). CharWalk's rig is the evidence: Body
+   hangs at CG's base with pos (0, 0), children drawn at the tip store pos.x = the parent's
+   length, and sketch_bones.lua maps the drawn base point by the parent rest matrix
+   inverse. The tip-frame composition shifted every child by its parent's length. IK is
+   re-derived for the base frame: the child's joint swings on a |pos| circle around the
+   shoulder (two-circle intersection), which also handles joint offsets past the tip.
+2. **Bone bases convert by role.** A root bone's base is a document *point* (canvas-centre
+   origin included — the full inch→pixel transform, like the camera track); a child bone's
+   base is a delta in its parent's frame (scale and flip, no point mapping). The binding
+   gate caught the root case (the posed rig rendered off-canvas); nothing bound to a child
+   masked the child case until the dial gate's analytic comparison did.
+3. **The smart-bone action rides on the dial's own angle channel as a lookup** — its pose
+   values are the dial angles each action frame answers to — and every affected channel
+   (bones and layer transforms alike) carries its own pose for the same action name.
+   Without the lookup on the dial, Moho never engages the action: every frame renders at
+   rest. The name-keyed-driver reading in decision 5 is superseded by the lookup inversion;
+   affected channels no longer need the action to sit on their own driver. Action keys must
+   be forced INTERP_LINEAR for the frame-by-frame gate — Moho's default smooth in an action
+   is not publicly specified, and the approximation shows in pixels.
+
+Gate numbers (translation-aligned F1 on 4px cells against Moho's FileRender, the stage-2
+methodology): the binding gate rides a bound canvas through a π rotation at F1 0.257–0.311
+(shifts within the ±24px content baseline; the unbound control collapses to 0.164 on the
+half-turn frame), and the dial gate follows the smart bone frame by frame at F1
+0.227/0.308/0.265/0.274 (f6/f12/f18/f24; stripping the actions collapses the overlap to
+0.064–0.073). The posing interaction is real now, too: a Bones tool draws the active
+layer's rig on the stage and dragging an IK tip keys the target through `bone.key` — the
+drag math is gated analytically (the hand tip lands on the cursor, lengths held, one drag
+one undo step).
