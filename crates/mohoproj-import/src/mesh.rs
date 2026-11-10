@@ -365,7 +365,10 @@ fn gradient_paint(b: &mut Builder, g: &Value, shape: &Value, path: &Path) -> Opt
     match kind {
         0 => Some(Paint::Linear { start: place(Vec2::new(bounds.min.x, centre.y)), end: place(Vec2::new(bounds.max.x, centre.y)), stops }),
         1 => Some(Paint::Radial { center: place(centre), radius: radius.max(1e-4), stops }),
-        2 => Some(Paint::Reflected { start: place(Vec2::new(bounds.min.x, centre.y)), end: place(Vec2::new(bounds.max.x, centre.y)), stops }),
+        // The reflected gradient mirrors about the shape's centre: the axis runs from the
+        // centre to the left edge, and the triangle-wave paint mirrors it to the right, so
+        // the fill is symmetric (centre = first stop, edges = last).
+        2 => Some(Paint::Reflected { start: place(centre), end: place(Vec2::new(bounds.min.x, centre.y)), stops }),
         3 => Some(Paint::Angle { center: place(centre), stops }),
         other => {
             b.report.skip(&format!("gradient type {other} fills (drawn solid)"));
