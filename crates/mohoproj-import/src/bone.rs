@@ -52,6 +52,9 @@ pub(crate) fn read_skeleton(b: &mut Builder, skeleton: Option<&Value>) -> Option
         binding_mode: json::integer(get(skeleton, "binding_mode")).unwrap_or(0).clamp(0, 100) as i32,
         ..Skeleton::default()
     };
+    // Bone bases are document POINTS (the canvas-centre origin included), like the camera
+    // track — they map through the full inch→pixel transform, not the delta scaling.
+    let to_px = b.to_px;
     for raw in bones {
         let mut bone = Bone { name: json::string(get(raw, "name")).unwrap_or_else(|| "Bone".into()), ..Bone::default() };
         // The parent is a flat-table index; −1 (or anything past the table) reads as none —
@@ -73,7 +76,7 @@ pub(crate) fn read_skeleton(b: &mut Builder, skeleton: Option<&Value>) -> Option
         bone.offset = json::vec2(get(raw, "offset")).map_or(Vec2::ZERO, |p| Vec2::new(p.x * b.dpi, -p.y * b.dpi));
         anim::read_channel(&mut bone.pos, raw, "anim_pos", &mut b.report, 2, |ch, i| {
             let (x, y, _z) = channel::sample_vec3_at(ch, i).unwrap_or((0.0, 0.0, 0.0));
-            Vec2::new(x * b.dpi, -y * b.dpi)
+            to_px.apply(Vec2::new(x as f32, y as f32))
         });
         anim::read_channel(&mut bone.angle, raw, "anim_angle", &mut b.report, 1, |ch, i| -(channel::sample_f64_at(ch, i).unwrap_or(0.0)) as f32);
         anim::read_channel(&mut bone.scale, raw, "anim_scale", &mut b.report, 1, |ch, i| channel::sample_f64_at(ch, i).unwrap_or(1.0) as f32);
