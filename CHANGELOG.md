@@ -4,6 +4,23 @@
 
 ## Unreleased
 
+* **Groups, layer effects, styles and the four gradient fills** (ADR 0103). Moho groups
+  import as composites: a folder that carries transform channels, opacity or filters renders
+  its whole run as one — the children chain its transform, its opacity fades overlaps as
+  one, its filters apply to the composite — with animation on the group itself working
+  (channels stay on the folder layer; children are no longer baked). Any layer can now carry
+  an opacity channel (`layer.set_opacity`) and a Moho-style effect stack
+  (`layer.set_filters`): blur, drop shadow with expansion/noise/threshold, glow, adjust
+  colour, noise, pixelate and threshold, applied to the layer's composited result.
+  Moho's four gradient fills all import (linear, radial, reflected, angle) with geometry
+  from the shape's bounds and its fill-effect transform — the angle gradient's phase
+  (12 o'clock, anticlockwise) and the reflected mirror were verified against Moho renders —
+  and the document gains a named style table from Moho's `styles[]`. `.anicraft` files are
+  format v6 (older files open unchanged). Still approximated: effect parameters are static
+  at the import frame (animated ones stay counted, the opacity channel excepted), and
+  linear/radial/reflected gradient geometry beyond the defaults awaits working Moho samples.
+
+* **Layer animation and the camera** (ADR 0025). Moho documents with animated layers now
 * **Layer animation and the camera** (ADR 0102). Moho documents with animated layers now
   play: each layer's translation, scale, rotation, shear and flips import as property
   channels (the Moho model, one curve per property — the same shape bones and switches will

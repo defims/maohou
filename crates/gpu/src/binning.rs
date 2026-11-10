@@ -354,8 +354,9 @@ pub fn bin(scene: &Scene, width: u32, height: u32) -> Result<Binned, NeedsFull> 
                     (BITMAP, [[u(slot as u32), u(u32::from(*repeat)), u(pixels.width), u(pixels.height)], [m[0], m[1], m[2], m[3]], [m[4], m[5], k, alpha], [tint[0], tint[1], tint[2], u(keep)]])
                 }
             }
-            // `prepare_scene` never hands these over; draw nothing rather than guess.
-            (Shader::Image { .. }, _) => (SOLID, [[0.0; 4]; 4]),
+            // `prepare_scene` never hands these over (the CPU draws them); draw nothing
+            // rather than guess.
+            (Shader::Image { .. }, _) | (Shader::Reflected { .. }, _) | (Shader::Angle { .. }, _) => (SOLID, [[0.0; 4]; 4]),
         };
         paints.extend_from_slice(&rec);
         let flags = if op >= nf {

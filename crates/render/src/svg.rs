@@ -8,7 +8,10 @@
 //! * masks become `clipPath`s (fill areas only, nested through `clip-path` on the clip), and an
 //!   empty mask clips everything, as on the stage;
 //! * outline-mode layers are hairlines in the layer colour;
-//! * variable-width strokes are filled outlines: the polygons the renderer fills.
+//! * variable-width strokes are filled outlines: the polygons the renderer fills;
+//! * filters map onto SVG filter primitives where one exists (blur, shadows, colour matrix,
+//!   hard thresholds); a filter with no primitive — grain, mosaic, and shadow
+//!   expansion/noise/threshold — is left out rather than drawn wrongly.
 //!
 //! The output is deterministic and contains only generated ids and numbers, so it needs no
 //! escaping.
@@ -165,7 +168,7 @@ fn svg_filter(filters: &[anicraft_doc::Filter], stage: (u32, u32), defs: &mut St
             Filter::Blur { blur_x, blur_y, quality } => {
                 let _ = write!(prims, "<feGaussianBlur stdDeviation=\"{} {}\"/>", num(sigma(blur_x, quality)), num(sigma(blur_y, quality)));
             }
-            Filter::DropShadow { blur_x, blur_y, strength, quality, angle, distance, color, inner: false, knockout: false, hide_object: false } => {
+            Filter::DropShadow { blur_x, blur_y, strength, quality, angle, distance, color, inner: false, knockout: false, hide_object: false, .. } => {
                 let a = angle.to_radians();
                 let _ = write!(
                     prims,
@@ -187,7 +190,17 @@ fn svg_filter(filters: &[anicraft_doc::Filter], stage: (u32, u32), defs: &mut St
                 let _ = write!(prims, "<feColorMatrix type=\"matrix\" values=\"{}\"/>", values.join(" "));
             }
             Filter::Bevel { .. } | Filter::GradientGlow { .. } | Filter::GradientBevel { .. } => effect_svg(&f, i, &mut prims),
-            Filter::DropShadow { .. } | Filter::Glow { .. } => {}
+            // Luminance snaps to black/white at `level`: a steep linear transfer after the
+            // luminance matrix steps exactly there.
+            Filter::Threshold { level } => {
+                let lum = "0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0 0 0 1 0";
+                let _ = write!(prims, "<feColorMatrix type=\"matrix\" values=\"{lum}\"/>");
+                let k = 1000.0;
+                let _ = write!(prims, "<feComponentTransfer><feFuncR type=\"linear\" slope=\"{k}\" intercept=\"{}\"/><feFuncG type=\"linear\" slope=\"{k}\" intercept=\"{}\"/><feFuncB type=\"linear\" slope=\"{k}\" intercept=\"{}\"/></feComponentTransfer>", num(-k * level), num(-k * level), num(-k * level));
+            }
+            // Grain and mosaic have no SVG filter primitive; shadows keep their plain form
+            // when expansion/noise/threshold are set (see the module notes).
+            Filter::DropShadow { .. } | Filter::Glow { .. } | Filter::Noise { .. } | Filter::Pixelate { .. } => {}
         }
     }
     if prims.is_empty() {
@@ -317,14 +330,23 @@ fn effect_svg(f: &anicraft_doc::Filter, i: usize, prims: &mut String) {
 }
 
 /// The fill attribute for `paint`, defining a gradient in `defs` when needed. `None` when the
-/// paint draws nothing.
+/// paint draws nothing. An angle gradient has no SVG paint server and falls back to the
+/// middle stop's solid colour.
 fn paint_attr(paint: &Paint, xf: &Affine, fx: &ColorEffect, defs: &mut String, n: &mut usize, image: Option<&std::sync::Arc<anicraft_doc::Pixels>>, images: &mut Vec<(usize, String)>) -> Option<String> {
     let stops = match paint {
         Paint::Solid(c) => {
             let c = fx.apply(*c).sanitized();
             return (c.a > 0.0).then(|| color_attrs("fill", c));
         }
-        Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => stops,
+        // An angle gradient draws as its middle stop's colour (the sweep itself has no SVG
+        // equivalent).
+        Paint::Angle { stops, .. } => {
+            let mut sorted: Vec<_> = stops.iter().filter(|s| s.offset.is_finite()).copied().collect();
+            sorted.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+            let c = fx.apply(sorted.get(sorted.len() / 2).map(|s| s.color).unwrap_or(Rgba::BLACK)).sanitized();
+            return (c.a > 0.0).then(|| color_attrs("fill", c));
+        }
+        Paint::Linear { stops, .. } | Paint::Radial { stops, .. } | Paint::Reflected { stops, .. } => stops,
         Paint::Bitmap { matrix, .. } => {
             // A pattern of the bitmap at its own pixel size, placed by the shape's transform
             // and the fill's image matrix.
@@ -373,10 +395,14 @@ fn paint_attr(paint: &Paint, xf: &Affine, fx: &ColorEffect, defs: &mut String, n
         Paint::Linear { start, end, .. } => {
             let _ = write!(defs, "<linearGradient id=\"{id}\"{gt} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">", num(start.x), num(start.y), num(end.x), num(end.y));
         }
+        Paint::Reflected { start, end, .. } => {
+            // The mirror repeats SVG knows how to draw.
+            let _ = write!(defs, "<linearGradient id=\"{id}\"{gt} spreadMethod=\"reflect\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">", num(start.x), num(start.y), num(end.x), num(end.y));
+        }
         Paint::Radial { center, radius, .. } => {
             let _ = write!(defs, "<radialGradient id=\"{id}\"{gt} cx=\"{}\" cy=\"{}\" r=\"{}\">", num(center.x), num(center.y), num(radius.max(0.0)));
         }
-        Paint::Solid(_) | Paint::Bitmap { .. } => return None,
+        Paint::Solid(_) | Paint::Bitmap { .. } | Paint::Angle { .. } => return None,
     }
     for s in &sorted {
         let c = fx.apply(s.color).sanitized();
@@ -386,7 +412,7 @@ fn paint_attr(paint: &Paint, xf: &Affine, fx: &ColorEffect, defs: &mut String, n
         }
         defs.push_str("/>");
     }
-    defs.push_str(if matches!(paint, Paint::Linear { .. }) { "</linearGradient>" } else { "</radialGradient>" });
+    defs.push_str(if matches!(paint, Paint::Radial { .. }) { "</radialGradient>" } else { "</linearGradient>" });
     Some(format!(" fill=\"url(#{id})\""))
 }
 

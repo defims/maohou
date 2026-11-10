@@ -5,7 +5,9 @@
 //! (outer), or inside it over the artwork (inner); Knockout keeps only the shadow or glow.
 //! Adjust Color is a colour matrix built from the standard matrix operations for brightness,
 //! contrast, saturation and hue rotation (Haeberli, "Matrix Operations for Image Processing",
-//! 1993), applied to unpremultiplied colour.
+//! 1993), applied to unpremultiplied colour. Noise mixes deterministic grain over the
+//! artwork's colour (the same pixel always speckles the same way); Pixelate averages blocks;
+//! Threshold snaps colours to black or white by luminance.
 //!
 //! Bevel and Gradient Bevel are emboss by offset differences, as the image-processing
 //! literature describes it: the blurred opacity sampled a distance towards the light minus the
@@ -55,7 +57,7 @@ pub enum FilterOp {
     /// blurred, times `strength` (clamped to 1), in `color` (straight, sanitized); under the
     /// artwork, or inside it over the artwork (`inner`). `knockout` keeps only the shadow;
     /// `hide_object` (outer) only the whole shadow.
-    Shadow { blur: BoxBlur, dx: i64, dy: i64, strength: f32, color: Rgba, inner: bool, knockout: bool, hide_object: bool },
+    Shadow { blur: BoxBlur, dx: i64, dy: i64, strength: f32, color: Rgba, inner: bool, knockout: bool, hide_object: bool, expansion: f32, noise: f32, threshold: bool },
     /// Bevel and Gradient Bevel: the blurred opacity at `(x + dx, y + dy)` minus at
     /// `(x − dx, y − dy)` (clamped to ±1), times `strength`, coloured by `paint` (a ramp is read
     /// at `0.5 − 0.5 v`), with the artwork as `side` and `knockout` say.
@@ -65,6 +67,12 @@ pub enum FilterOp {
     GradientGlow { blur: BoxBlur, dx: i64, dy: i64, strength: f32, ramp: Vec<Premul>, side: FilterSide, knockout: bool },
     /// Adjust Color: a colour matrix on unpremultiplied colour.
     AdjustColor(Matrix),
+    /// Film grain over the artwork's colour, deterministic per pixel (ADR 0103).
+    Noise { amount: f32 },
+    /// Mosaic: blocks of `size` pixels take their average.
+    Pixelate { size: usize },
+    /// Colours snap to black/white by straight luminance against `level`; alpha kept.
+    Threshold { level: f32 },
 }
 
 /// `f` at view scale `scale` (stage pixels to surface pixels; a broken scale counts as 1).
@@ -72,14 +80,14 @@ pub fn resolve(f: &Filter, scale: f32) -> FilterOp {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     match f.sanitized() {
         Filter::Blur { blur_x, blur_y, quality } => FilterOp::Blur(BoxBlur::new(blur_x * scale, blur_y * scale, quality)),
-        Filter::DropShadow { blur_x, blur_y, strength, quality, angle, distance, color, inner, knockout, hide_object } => {
+        Filter::DropShadow { blur_x, blur_y, strength, quality, angle, distance, color, inner, knockout, hide_object, expansion, noise, threshold } => {
             let a = angle.to_radians();
             let (dx, dy) = ((distance * scale * a.cos()).round() as i64, (distance * scale * a.sin()).round() as i64);
             let blur = BoxBlur::new(blur_x * scale, blur_y * scale, quality);
-            FilterOp::Shadow { blur, dx, dy, strength, color: color.sanitized(), inner, knockout: knockout || (hide_object && inner), hide_object }
+            FilterOp::Shadow { blur, dx, dy, strength, color: color.sanitized(), inner, knockout: knockout || (hide_object && inner), hide_object, expansion: (expansion * scale).round(), noise, threshold }
         }
         Filter::Glow { blur_x, blur_y, strength, quality, color, inner, knockout } => {
-            FilterOp::Shadow { blur: BoxBlur::new(blur_x * scale, blur_y * scale, quality), dx: 0, dy: 0, strength, color: color.sanitized(), inner, knockout, hide_object: false }
+            FilterOp::Shadow { blur: BoxBlur::new(blur_x * scale, blur_y * scale, quality), dx: 0, dy: 0, strength, color: color.sanitized(), inner, knockout, hide_object: false, expansion: 0.0, noise: 0.0, threshold: false }
         }
         Filter::Bevel { blur_x, blur_y, strength, quality, angle, distance, shadow_color, highlight_color, side, knockout } => {
             let (dx, dy) = offset(angle, distance * scale);
@@ -95,6 +103,9 @@ pub fn resolve(f: &Filter, scale: f32) -> FilterOp {
             FilterOp::GradientGlow { blur: BoxBlur::new(blur_x * scale, blur_y * scale, quality), dx, dy, strength, ramp: ramp_lut(&stops), side, knockout }
         }
         Filter::AdjustColor { brightness, contrast, saturation, hue } => FilterOp::AdjustColor(color_matrix(brightness, contrast, saturation, hue)),
+        Filter::Noise { amount } => FilterOp::Noise { amount },
+        Filter::Pixelate { size } => FilterOp::Pixelate { size: (size * scale).round().max(1.0) as usize },
+        Filter::Threshold { level } => FilterOp::Threshold { level },
     }
 }
 
@@ -107,7 +118,7 @@ pub fn apply(buf: &mut [Premul], w: usize, h: usize, filters: &[Filter], scale: 
     for f in filters {
         match resolve(f, scale) {
             FilterOp::Blur(b) => blur_channels(buf, w, h, b),
-            FilterOp::Shadow { blur, dx, dy, strength, color, inner, knockout, hide_object } => shadow(buf, w, h, Shadow { blur, strength, dx, dy, color, inner, knockout, hide_object }),
+            FilterOp::Shadow { blur, dx, dy, strength, color, inner, knockout, hide_object, expansion, noise, threshold } => shadow(buf, w, h, Shadow { blur, strength, dx, dy, color, inner, knockout, hide_object, expansion, noise, threshold }),
             FilterOp::Bevel { blur, dx, dy, strength, paint, side, knockout } => {
                 let field = bevel_field(buf, w, h, blur, dx, dy);
                 let effect: Vec<Premul> = match &paint {
@@ -134,6 +145,9 @@ pub fn apply(buf: &mut [Premul], w: usize, h: usize, filters: &[Filter], scale: 
                 composite(buf, inner.as_ref().unwrap_or(&none), outer.as_ref().unwrap_or(&none), side, knockout);
             }
             FilterOp::AdjustColor(m) => adjust(buf, &m),
+            FilterOp::Noise { amount } => noise(buf, w, amount),
+            FilterOp::Pixelate { size } => pixelate(buf, w, h, size),
+            FilterOp::Threshold { level } => threshold(buf, level),
         }
     }
 }
@@ -282,6 +296,12 @@ struct Shadow {
     inner: bool,
     knockout: bool,
     hide_object: bool,
+    /// Pixels the silhouette grows (positive) or shrinks (negative) before the blur.
+    expansion: f32,
+    /// Grain mixed into the shadow, `0..=1`.
+    noise: f32,
+    /// Snap the blurred coverage to hard on/off.
+    threshold: bool,
 }
 
 fn shadow(buf: &mut [Premul], w: usize, h: usize, s: Shadow) {
@@ -296,26 +316,154 @@ fn shadow(buf: &mut [Premul], w: usize, h: usize, s: Shadow) {
             }
         }
     }
+    // Expansion dilates (a running box maximum) or erodes (the mirrored minimum) the
+    // silhouette before the blur; the window is ±e pixels wide.
+    let e = s.expansion.abs().round() as usize;
+    if e > 0 {
+        let n = e * 2 + 1;
+        if s.expansion > 0.0 {
+            box_extreme(&mut cov, w, h, n, f32::max);
+        } else {
+            box_extreme(&mut cov, w, h, n, f32::min);
+        }
+    }
     blur_channels(&mut cov, w, h, s.blur);
+    if s.threshold {
+        for k in cov.iter_mut() {
+            k[0] = if k[0] >= 0.5 { 1.0 } else { 0.0 };
+        }
+    }
     let c = s.color;
-    for (p, k) in buf.iter_mut().zip(&cov) {
+    for (i, (p, k)) in buf.iter_mut().zip(&cov).enumerate() {
         let sa = (k[0] * s.strength).clamp(0.0, 1.0) * c.a;
+        // Shadow grain: deterministic per pixel, on the shadow colour before compositing.
+        let mut col = c;
+        if s.noise > 0.0 && sa > 0.0 {
+            let d = (speckle(i, w) - 0.5) * s.noise;
+            col = Rgba::new((c.r + d).clamp(0.0, 1.0), (c.g + d).clamp(0.0, 1.0), (c.b + d).clamp(0.0, 1.0), c.a);
+        }
         let src = *p;
         let ba = src[3];
         *p = if s.inner {
             // Inside the artwork, over it.
             let a = sa * ba;
-            if s.knockout { [c.r * a, c.g * a, c.b * a, a] } else { [c.r * a + src[0] * (1.0 - sa), c.g * a + src[1] * (1.0 - sa), c.b * a + src[2] * (1.0 - sa), ba] }
+            if s.knockout { [col.r * a, col.g * a, col.b * a, a] } else { [col.r * a + src[0] * (1.0 - sa), col.g * a + src[1] * (1.0 - sa), col.b * a + src[2] * (1.0 - sa), ba] }
         } else if s.hide_object {
-            [c.r * sa, c.g * sa, c.b * sa, sa]
+            [col.r * sa, col.g * sa, col.b * sa, sa]
         } else if s.knockout {
             let a = sa * (1.0 - ba);
-            [c.r * a, c.g * a, c.b * a, a]
+            [col.r * a, col.g * a, col.b * a, a]
         } else {
             // Under the artwork.
             let k = 1.0 - ba;
-            [src[0] + c.r * sa * k, src[1] + c.g * sa * k, src[2] + c.b * sa * k, ba + sa * k]
+            [src[0] + col.r * sa * k, src[1] + col.g * sa * k, src[2] + col.b * sa * k, ba + sa * k]
         };
+    }
+}
+
+/// A separable running box maximum (or, with `f`, any monotone fold) over `n`-pixel windows.
+fn box_extreme(buf: &mut [[f32; 1]], w: usize, h: usize, n: usize, f: fn(f32, f32) -> f32) {
+    if n <= 1 {
+        return;
+    }
+    let (lo, hi) = (n / 2, n - 1 - n / 2);
+    let mut tmp: Vec<[f32; 1]> = Vec::new();
+    let pass = |buf: &mut [[f32; 1]], w: usize, h: usize, horizontal: bool, tmp: &mut Vec<[f32; 1]>| {
+        let (len, lines) = if horizontal { (w, h) } else { (h, w) };
+        let idx = |line: usize, i: usize| if horizontal { line * w + i } else { i * w + line };
+        tmp.clear();
+        tmp.resize(len, [0.0]);
+        for line in 0..lines {
+            for (i, t) in tmp.iter_mut().enumerate() {
+                if let Some(v) = buf.get(idx(line, i)) {
+                    *t = *v;
+                }
+            }
+            for i in 0..len {
+                let lo = i.saturating_sub(lo);
+                let hi = (i + hi).min(len - 1);
+                let mut m = tmp[lo][0];
+                for v in &tmp[lo..=hi] {
+                    m = f(m, v[0]);
+                }
+                if let Some(out) = buf.get_mut(idx(line, i)) {
+                    out[0] = m;
+                }
+            }
+        }
+    };
+    pass(buf, w, h, true, &mut tmp);
+    pass(buf, w, h, false, &mut tmp);
+}
+
+/// Deterministic grain in `0..1` for pixel `i` of a `w`-wide buffer (a classic sine hash —
+/// stable across renders and threads).
+fn speckle(i: usize, w: usize) -> f32 {
+    let (x, y) = ((i % w) as f32, (i / w) as f32);
+    let v = (x * 12.9898 + y * 78.233).sin() * 43_758.547;
+    v - v.floor()
+}
+
+/// Film grain over the artwork's colour (alpha kept): each pixel's straight colour shifts by
+/// the same deterministic speckle, scaled by `amount`.
+fn noise(buf: &mut [Premul], w: usize, amount: f32) {
+    for (i, p) in buf.iter_mut().enumerate() {
+        let a = p[3];
+        if a <= 1e-6 {
+            continue;
+        }
+        let d = (speckle(i, w) - 0.5) * amount;
+        *p = [(p[0] + d * a).clamp(0.0, a), (p[1] + d * a).clamp(0.0, a), (p[2] + d * a).clamp(0.0, a), a];
+    }
+}
+
+/// Mosaic: each `n`-pixel block takes the average of the pixels it actually covers.
+fn pixelate(buf: &mut [Premul], w: usize, h: usize, n: usize) {
+    if n <= 1 {
+        return;
+    }
+    for by in 0..h.div_ceil(n) {
+        for bx in 0..w.div_ceil(n) {
+            let (x0, y0) = (bx * n, by * n);
+            let (x1, y1) = ((x0 + n).min(w), (y0 + n).min(h));
+            let mut sum = [0.0f32; 4];
+            let mut count = 0u64;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    if let Some(p) = buf.get(y * w + x) {
+                        for c in 0..4 {
+                            sum[c] += p[c];
+                        }
+                    }
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+            let avg = [sum[0] / count as f32, sum[1] / count as f32, sum[2] / count as f32, sum[3] / count as f32];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    if let Some(p) = buf.get_mut(y * w + x) {
+                        *p = avg;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Colours snap to black or white by their luminance against `level` (straight colour, alpha
+/// kept).
+fn threshold(buf: &mut [Premul], level: f32) {
+    for p in buf.iter_mut() {
+        let a = p[3];
+        if a <= 1e-6 {
+            continue;
+        }
+        let lum = 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+        let v = (lum / a) >= level;
+        *p = [if v { a } else { 0.0 }, if v { a } else { 0.0 }, if v { a } else { 0.0 }, a];
     }
 }
 
@@ -407,7 +555,7 @@ mod tests {
     fn drop_shadows_sit_under_and_offset() {
         let (w, h) = (40, 40);
         let mut b = square(w, h, 10, 20);
-        let ds = Filter::DropShadow { blur_x: 0.0, blur_y: 0.0, strength: 1.0, quality: 1, angle: 0.0, distance: 5.0, color: Rgba::BLACK, inner: false, knockout: false, hide_object: false };
+        let ds = Filter::DropShadow { blur_x: 0.0, blur_y: 0.0, strength: 1.0, quality: 1, angle: 0.0, distance: 5.0, color: Rgba::BLACK, inner: false, knockout: false, hide_object: false, expansion: 0.0, noise: 0.0, threshold: false };
         apply(&mut b, w, h, std::slice::from_ref(&ds), 1.0);
         assert_eq!(b[15 * w + 22], [0.0, 0.0, 0.0, 1.0], "shadow to the right");
         assert_eq!(b[15 * w + 15], [1.0, 0.0, 0.0, 1.0], "artwork on top");
@@ -415,7 +563,7 @@ mod tests {
         // Knockout: only the shadow outside the artwork; hide object: the whole shadow.
         let mut k = square(w, h, 10, 20);
         let Filter::DropShadow { .. } = ds else { panic!() };
-        apply(&mut k, w, h, &[Filter::DropShadow { knockout: true, blur_x: 0.0, blur_y: 0.0, strength: 1.0, quality: 1, angle: 0.0, distance: 5.0, color: Rgba::BLACK, inner: false, hide_object: false }], 1.0);
+        apply(&mut k, w, h, &[Filter::DropShadow { knockout: true, blur_x: 0.0, blur_y: 0.0, strength: 1.0, quality: 1, angle: 0.0, distance: 5.0, color: Rgba::BLACK, inner: false, hide_object: false, expansion: 0.0, noise: 0.0, threshold: false }], 1.0);
         assert_eq!(k[15 * w + 15][3], 0.0);
         assert_eq!(k[15 * w + 22][3], 1.0);
         // Inner glow: inside the edge only.

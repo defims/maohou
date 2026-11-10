@@ -22,3 +22,6 @@ Thumbs.db
 
 # parallel milestone worktrees (AGENTS.md › Milestone tracks)
 /.worktrees/
+
+# Moho test corpus: kept beside the workspace, never committed (parity plan §3.8)
+/maop-corpus/

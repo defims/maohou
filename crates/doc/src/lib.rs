@@ -100,6 +100,12 @@ pub enum Paint {
     Solid(Rgba),
     Linear { start: Vec2, end: Vec2, stops: Vec<GradientStop> },
     Radial { center: Vec2, radius: f32, stops: Vec<GradientStop> },
+    /// Mirrored linear: the gradient reflects back and forth between `start` and `end`
+    /// (Moho's reflected gradient; SVG's `spreadMethod="reflect"`).
+    Reflected { start: Vec2, end: Vec2, stops: Vec<GradientStop> },
+    /// A sweep around `center`, one full turn starting at 12 o'clock and turning
+    /// anticlockwise on screen (Moho's angle gradient; phase verified against Moho renders).
+    Angle { center: Vec2, stops: Vec<GradientStop> },
     /// A bitmap, its pixel (x, y) at local `matrix · (x, y)`; `repeat` tiles it, otherwise it
     /// shows once (an imported image is a rectangle of exactly its size, with no matrix).
     Bitmap {
@@ -121,7 +127,7 @@ impl Paint {
     pub fn primary_color(&self) -> Rgba {
         match self {
             Paint::Solid(c) => *c,
-            Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => stops.first().map_or(Rgba::BLACK, |s| s.color),
+            Paint::Linear { stops, .. } | Paint::Radial { stops, .. } | Paint::Reflected { stops, .. } | Paint::Angle { stops, .. } => stops.first().map_or(Rgba::BLACK, |s| s.color),
             Paint::Bitmap { .. } => Rgba::hex(0x808080),
         }
     }
@@ -134,6 +140,8 @@ impl Paint {
             Paint::Solid(_) => self.clone(),
             Paint::Linear { start, end, stops } => Paint::Linear { start: m.apply(*start), end: m.apply(*end), stops: stops.clone() },
             Paint::Radial { center, radius, stops } => Paint::Radial { center: m.apply(*center), radius: radius * m.mean_scale(), stops: stops.clone() },
+            Paint::Reflected { start, end, stops } => Paint::Reflected { start: m.apply(*start), end: m.apply(*end), stops: stops.clone() },
+            Paint::Angle { center, stops } => Paint::Angle { center: m.apply(*center), stops: stops.clone() },
             Paint::Bitmap { bitmap, repeat, matrix } => Paint::Bitmap { bitmap: *bitmap, repeat: *repeat, matrix: m.mul(matrix) },
         }
     }
@@ -152,6 +160,14 @@ impl Paint {
             },
             (Paint::Radial { center: c0, radius: r0, stops: a }, Paint::Radial { center: c1, radius: r1, stops: b }) => match lerp_stops(a, b) {
                 Some(stops) => Paint::Radial { center: c0.lerp(*c1, t), radius: anicraft_geom::lerp(*r0, *r1, t), stops },
+                None => self.clone(),
+            },
+            (Paint::Reflected { start: s0, end: e0, stops: a }, Paint::Reflected { start: s1, end: e1, stops: b }) => match lerp_stops(a, b) {
+                Some(stops) => Paint::Reflected { start: s0.lerp(*s1, t), end: e0.lerp(*e1, t), stops },
+                None => self.clone(),
+            },
+            (Paint::Angle { center: c0, stops: a }, Paint::Angle { center: c1, stops: b }) => match lerp_stops(a, b) {
+                Some(stops) => Paint::Angle { center: c0.lerp(*c1, t), stops },
                 None => self.clone(),
             },
             _ => self.clone(),
@@ -632,6 +648,28 @@ pub enum LayerKind {
 /// Deepest nesting of folders (and a mask inside them) that is kept.
 pub const MAX_LAYER_DEPTH: usize = 16;
 
+/// Most filters one layer's effect stack holds (files and commands alike).
+pub const MAX_LAYER_FILTERS: usize = 16;
+
+/// Most named styles a document's style table holds.
+pub const MAX_STYLES: usize = 1_000;
+
+/// One entry of a document's named style table (Moho's `styles[]`): the fill and stroke a
+/// shape may carry by name. Shapes keep their own inline paints (what Moho shapes carry too);
+/// the table is the shared reference artists pick from, and a future style binding resolves
+/// against it. Brush-family settings have no slot yet and stay in the import sidecar.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Style {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Rgba>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<Rgba>,
+    /// The stroke width the style suggests (document units; `None` = unset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_width: Option<f32>,
+}
+
 /// A timeline layer. Keyframes are `Arc`-shared (see [`Keyframe`]).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Layer {
@@ -687,6 +725,15 @@ pub struct Layer {
     /// layer (Moho's `camera_immune`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub camera_immune: bool,
+    /// The whole layer's opacity over time, `0..=1` (Moho's `layer_effects.alpha`). Empty =
+    /// fully opaque. A layer below full opacity composites as one group, so its overlapping
+    /// artwork doesn't show through itself.
+    #[serde(default, skip_serializing_if = "Channel::is_empty")]
+    pub opacity: Channel<f32>,
+    /// Post-effects on the layer's composited result, in order (Moho's layer effect stack:
+    /// blur, shadow, noise, pixelation, threshold). Empty for most layers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<Filter>,
 }
 
 fn is_zero2(v: &Vec2) -> bool {
@@ -725,6 +772,8 @@ impl PartialEq for Layer {
             && self.origin == o.origin
             && self.camera_immune == o.camera_immune
             && arcs_eq(&self.keyframes, &o.keyframes)
+            && self.opacity == o.opacity
+            && self.filters == o.filters
     }
 }
 
@@ -758,6 +807,8 @@ impl Layer {
             flip_v: Channel::default(),
             origin: Vec2::ZERO,
             camera_immune: false,
+            opacity: Channel::default(),
+            filters: Vec::new(),
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by
@@ -770,6 +821,16 @@ impl Layer {
             || !self.flip_h.is_empty()
             || !self.flip_v.is_empty()
             || self.origin != Vec2::ZERO
+    }
+    /// The layer's opacity at `frame` (`0..=1`; 1.0 when no channel carries keys).
+    pub fn opacity_at(&self, frame: u32) -> f32 {
+        self.opacity.sample_or(frame as f32, 1.0).clamp(0.0, 1.0)
+    }
+    /// Whether this layer composites on its own: it carries opacity below full, filters, or
+    /// (for folders) transform channels — so it renders as one [`crate::Group`], not as plain
+    /// layers. Frame-independent, so evaluations stay stable across playback.
+    pub fn composites(&self) -> bool {
+        !self.filters.is_empty() || !self.opacity.is_empty() || (self.kind == LayerKind::Folder && self.has_transform())
     }
     /// The layer's transform channels, sampled at `frame` and composed the way Moho composes
     /// them: translation, then rotation, shear and scale (flips included), all around the
@@ -810,6 +871,13 @@ impl Layer {
         self.shear.sanitize();
         self.flip_h.sanitize();
         self.flip_v.sanitize();
+        self.opacity.sanitize();
+        for f in &mut self.filters {
+            *f = f.sanitized();
+        }
+        if self.filters.len() > MAX_LAYER_FILTERS {
+            self.filters.truncate(MAX_LAYER_FILTERS);
+        }
         if !self.origin.x.is_finite() || !self.origin.y.is_finite() {
             self.origin = Vec2::ZERO;
         }
@@ -1253,6 +1321,9 @@ pub struct Document {
     /// Sounds in the library, placed on keyframes through [`FrameSound`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sounds: Vec<Arc<Sound>>,
+    /// The document's named styles ([`Style`]); shapes painted inline keep their own paints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<Arc<Style>>,
     /// The class scripts run the main timeline as (Animate's "document class"), kept as text
     /// (ADR 0013 tier 1); empty when there is none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -1281,6 +1352,8 @@ struct DocumentFile {
     #[serde(default)]
     sounds: Vec<Arc<Sound>>,
     #[serde(default)]
+    styles: Vec<Arc<Style>>,
+    #[serde(default)]
     document_class: String,
     maop_maohou: Option<Arc<MaohouSidecar>>,
     #[serde(default = "first_id")]
@@ -1293,7 +1366,7 @@ impl From<DocumentFile> for Document {
         if let Some(tl) = f.timeline {
             scenes.insert(0, Arc::new(Scene { name: "Scene 1".into(), timeline: tl, ..Scene::new("") }));
         }
-        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, document_class: f.document_class, maop_maohou: f.maop_maohou, next_id: f.next_id }
+        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, styles: f.styles, document_class: f.document_class, maop_maohou: f.maop_maohou, next_id: f.next_id }
     }
 }
 
@@ -1306,13 +1379,13 @@ static NO_TIMELINE: Timeline = Timeline { layers: Vec::new() };
 
 impl PartialEq for Document {
     fn eq(&self, o: &Document) -> bool {
-        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && self.maop_maohou == o.maop_maohou
+        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arcs_eq(&self.styles, &o.styles) && self.maop_maohou == o.maop_maohou
     }
 }
 
 impl Default for Document {
     fn default() -> Self {
-        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), document_class: String::new(), maop_maohou: None, next_id: 1 };
+        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), styles: Vec::new(), document_class: String::new(), maop_maohou: None, next_id: 1 };
         let id = LayerId(d.alloc_id());
         d.timeline_mut(0).layers.push(Arc::new(Layer::new(id, "Layer 1")));
         d
@@ -1448,6 +1521,16 @@ impl Document {
         }
         for s in &self.sounds {
             max_id = max_id.max(s.id.0);
+        }
+        if self.styles.len() > MAX_STYLES {
+            self.styles.truncate(MAX_STYLES);
+        }
+        for (i, style) in self.styles.iter_mut().enumerate() {
+            let bad = style.name.trim().is_empty() || style.name.len() > 256;
+            if bad {
+                let name = Arc::make_mut(style);
+                name.name = format!("Style {}", i + 1);
+            }
         }
         self.next_id = self.next_id.max(max_id.saturating_add(1));
     }

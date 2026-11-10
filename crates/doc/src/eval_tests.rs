@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Channel, Easing, Keyframe, Scene, Symbol, SymbolId, SymbolKind, Tween, TweenKind};
+use crate::{Channel, Easing, Filter, Keyframe, Scene, Symbol, SymbolId, SymbolKind, Tween, TweenKind};
 use anicraft_geom::Vec2;
 
 fn shape_el(id: u64, x: f32) -> Element {
@@ -569,3 +569,140 @@ fn scene_frame_range_bounds_playback() {
     let (scene, local) = d.locate(12);
     assert_eq!((scene, local), (1, 0));
 }
+
+// ----- folder compositing, layer opacity and filters (ADR 0103) -------------------------
+
+/// Two layers: a folder on top with a child below it (the child names the folder as its
+/// parent), each holding one rectangle.
+fn folder_doc() -> (Document, LayerId, LayerId) {
+    let mut d = Document::default();
+    let (folder, child) = (LayerId(d.alloc_id()), LayerId(d.alloc_id()));
+    let mut f = Layer::new(folder, "Group");
+    f.kind = LayerKind::Folder;
+    let mut c = Layer::new(child, "Child");
+    c.parent = Some(folder);
+    let mut k = Keyframe::new(0, 100);
+    k.elements.push(Arc::new(shape_el(10, 0.0)));
+    c.keyframes = vec![Arc::new(k)];
+    let tl = &mut d.timeline_mut(0);
+    tl.layers.clear();
+    tl.layers.push(Arc::new(f));
+    tl.layers.push(Arc::new(c));
+    (d, folder, child)
+}
+
+#[test]
+fn a_plain_folder_stays_invisible() {
+    let (d, _, _) = folder_doc();
+    let dl = evaluate(&d, 0);
+    assert!(dl.groups.is_empty(), "an organizational folder adds no group");
+    assert_eq!(dl.items.len(), 1);
+}
+
+#[test]
+fn folder_transform_channels_move_the_whole_run() {
+    let (mut d, folder, _) = folder_doc();
+    let f = d.timeline_mut(0).layer_mut(folder).unwrap();
+    f.translation = Channel::constant(0, Vec2::new(30.0, 5.0));
+    let dl = evaluate(&d, 0);
+    // The child's item carries the folder transform in front of its own layer transform.
+    assert_eq!(dl.items[0].transform.translation(), Vec2::new(30.0, 5.0));
+    assert_eq!(dl.groups.len(), 1, "a transformed folder composites");
+}
+
+#[test]
+fn folder_opacity_fades_the_run_as_one_group() {
+    let (mut d, folder, _) = folder_doc();
+    let f = d.timeline_mut(0).layer_mut(folder).unwrap();
+    f.opacity = Channel::constant(0, 0.4);
+    let dl = evaluate(&d, 0);
+    let (gid, g) = dl.groups.iter().enumerate().next().unwrap();
+    assert!((g.alpha - 0.4).abs() < 1e-6);
+    assert!(g.filters.is_empty());
+    assert_eq!(dl.items[0].group, Some(gid as u32));
+    assert!((dl.effective_alpha(&dl.items[0]) - 0.4).abs() < 1e-6);
+    // Animated opacity keys apply per frame.
+    let f = d.timeline_mut(0).layer_mut(folder).unwrap();
+    f.opacity.set_key(10, 1.0);
+    assert!((evaluate(&d, 5).groups[0].alpha - 0.7).abs() < 1e-5);
+    assert!((evaluate(&d, 10).groups[0].alpha - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn folder_filters_apply_to_the_composite() {
+    let (mut d, folder, _) = folder_doc();
+    let f = d.timeline_mut(0).layer_mut(folder).unwrap();
+    f.filters.push(Filter::Blur { blur_x: 4.0, blur_y: 4.0, quality: 1 });
+    let dl = evaluate(&d, 0);
+    assert_eq!(dl.groups.len(), 1);
+    assert_eq!(dl.groups[0].filters.len(), 1);
+}
+
+#[test]
+fn nested_folders_chain_transforms_and_groups() {
+    let (mut d, outer, inner) = folder_doc();
+    // A third layer: a folder inside the outer folder's run.
+    let mut mid = Layer::new(LayerId(d.alloc_id()), "Inner");
+    mid.kind = LayerKind::Folder;
+    mid.parent = Some(outer);
+    // The child now sits in `mid`.
+    d.timeline_mut(0).layer_mut(inner).unwrap().parent = Some(mid.id);
+    let tl = &mut d.timeline_mut(0);
+    let child = tl.layers.pop().unwrap();
+    let mid = Arc::new(mid);
+    tl.layers.push(mid.clone());
+    tl.layers.push(child);
+    d.timeline_mut(0).layer_mut(outer).unwrap().translation = Channel::constant(0, Vec2::new(100.0, 0.0));
+    d.timeline_mut(0).layer_mut(mid.id).unwrap().translation = Channel::constant(0, Vec2::new(0.0, 10.0));
+    let dl = evaluate(&d, 0);
+    assert_eq!(dl.items[0].transform.translation(), Vec2::new(100.0, 10.0), "outer then inner");
+    assert_eq!(dl.groups.len(), 2, "nested groups stack");
+    assert!(dl.groups[0].parent.is_none());
+    assert_eq!(dl.groups[1].parent, Some(0), "the inner group nests in the outer");
+}
+
+#[test]
+fn hidden_folder_hides_a_compositing_run_too() {
+    let (mut d, folder, _) = folder_doc();
+    let f = d.timeline_mut(0).layer_mut(folder).unwrap();
+    f.visible = false;
+    f.opacity = Channel::constant(0, 0.5);
+    assert!(evaluate(&d, 0).items.is_empty());
+}
+
+#[test]
+fn layer_opacity_and_filters_wrap_a_leaf_layer() {
+    let mut d = rect_doc();
+    let l = layer0(&mut d);
+    l.opacity = Channel::constant(0, 0.3);
+    l.filters.push(Filter::Pixelate { size: 8.0 });
+    let dl = evaluate(&d, 0);
+    assert_eq!(dl.groups.len(), 1);
+    assert!((dl.groups[0].alpha - 0.3).abs() < 1e-6);
+    assert_eq!(dl.groups[0].filters.len(), 1);
+    assert_eq!(dl.items[0].group, Some(0));
+}
+
+#[test]
+fn camera_immune_inside_a_folder_still_gets_the_folder_transform() {
+    let (mut d, folder, child) = folder_doc();
+    let f = d.timeline_mut(0).layer_mut(folder).unwrap();
+    f.translation = Channel::constant(0, Vec2::new(50.0, 0.0));
+    let c = d.timeline_mut(0).layer_mut(child).unwrap();
+    c.camera_immune = true;
+    Arc::make_mut(&mut d.scenes[0]).camera.track = Channel::constant(0, Vec2::new(640.0, 360.0));
+    Arc::make_mut(&mut d.scenes[0]).camera.zoom = Channel::constant(0, 4.0);
+    let dl = evaluate(&d, 0);
+    // Camera dropped (immune), folder transform kept.
+    assert_eq!(dl.items[0].transform.translation(), Vec2::new(50.0, 0.0));
+}
+
+#[test]
+fn full_opacity_layer_makes_no_group() {
+    let mut d = rect_doc();
+    let l = layer0(&mut d);
+    l.opacity = Channel::constant(0, 1.0);
+    let dl = evaluate(&d, 0);
+    assert!(dl.groups.is_empty(), "a fully opaque layer composites as before");
+}
+

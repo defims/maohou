@@ -16,7 +16,7 @@ use anicraft_text::{Align, FaceMatch, Fonts, TextError};
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(crate) fn text_elements(b: &mut Builder, layer: &Value, world: Affine, alpha: f32, out: &mut Vec<Arc<Element>>) {
+pub(crate) fn text_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {
     let Some(txt) = json::string(get(layer, "text")).filter(|t| !t.trim().is_empty()) else { return };
     if !json::boolean(get(layer, "fill")).unwrap_or(true) {
         b.report.skip("text drawn as stroke only");
@@ -94,7 +94,7 @@ pub(crate) fn text_elements(b: &mut Builder, layer: &Value, world: Affine, alpha
         id: ElementId(b.doc.alloc_id()),
         name: String::new(),
         transform,
-        color: ColorEffect { alpha: alpha.clamp(0.0, 1.0), ..ColorEffect::default() },
+        color: ColorEffect::default(),
         kind: ElementKind::Text(Arc::new(block)),
     }));
 }

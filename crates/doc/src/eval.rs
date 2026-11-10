@@ -2,7 +2,7 @@
 
 use crate::camera::Camera;
 use crate::player::PlayerState;
-use crate::{ColorEffect, Document, Element, ElementId, ElementKind, Layer, LayerId, LayerKind, Paint, Rgba, Shape, Stroke, SymbolId, SymbolKind, Timeline, TweenKind};
+use crate::{ColorEffect, Document, Element, ElementId, ElementKind, Layer, LayerId, LayerKind, MAX_LAYER_DEPTH, Paint, Rgba, Shape, Stroke, SymbolId, SymbolKind, Timeline, TweenKind};
 use anicraft_geom::walk::PathWalk;
 use anicraft_geom::{Affine, FillRule, Path};
 use std::borrow::Cow;
@@ -272,6 +272,12 @@ fn interpolate(a: &Element, b: &Element, t: f32, morph: bool, hints: &[(anicraft
 struct Ctx {
     /// Local → stage transform and colour effect of the enclosing instance.
     xf: Affine,
+    /// The transforms of the folders this timeline's layers sit in, outermost first (a folder
+    /// with transform channels moves its whole run; see [`Layer::composites`]). Resets on
+    /// symbol entry: the outer chain is already inside `xf`.
+    folders: Affine,
+    /// A folder in the chain above is `camera_immune`, so this timeline's layers are too.
+    immune: bool,
     color: ColorEffect,
     depth: usize,
     /// The top-level layer and element everything inside belongs to (for picking).
@@ -295,7 +301,7 @@ struct Ctx {
 
 impl Ctx {
     fn top(xf: Affine) -> Ctx {
-        Ctx { xf, color: ColorEffect::default(), depth: 0, root: None, outline: None, clip: None, masks: None, guide: false, group: None, camera: None, scene_view: Affine::IDENTITY }
+        Ctx { xf, folders: Affine::IDENTITY, immune: false, color: ColorEffect::default(), depth: 0, root: None, outline: None, clip: None, masks: None, guide: false, group: None, camera: None, scene_view: Affine::IDENTITY }
     }
 
     /// A main timeline seen through `camera`: its tint colours everything.
@@ -374,15 +380,80 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
             out.clip_parents.push(cx.clip);
         }
     }
-    let clip_of = |id: LayerId| clips.iter().find(|(l, _)| *l == id).map(|(_, c)| *c);
-    // Folders draw nothing, and a hidden folder hides everything in it.
-    let has_folders = tl.layers.iter().any(|l| l.kind == LayerKind::Folder);
-    for (index, layer) in tl.layers.iter().enumerate().rev() {
+    // Folders draw nothing themselves, and a hidden folder hides everything in it.
+    let walk = Walk { clips: &clips, has_folders: tl.layers.iter().any(|l| l.kind == LayerKind::Folder), inside: None, play };
+    eval_layers(doc, tl, frame, cx, 0..tl.layers.len(), &walk, out);
+}
+
+/// What a timeline walk needs beside the context: the precomputed mask clips, whether any
+/// folder exists (so hidden folders are checked at all), and the folder whose run this walk
+/// draws (`None` for the timeline's own pass).
+struct Walk<'a> {
+    clips: &'a [(LayerId, u32)],
+    has_folders: bool,
+    inside: Option<LayerId>,
+    /// The player state a symbol descent hands down (upstream's interactive player).
+    play: Option<&'a Play<'a>>,
+}
+
+/// Evaluates the layers of `range` (top layer last). A folder that composites (ADR 0103: it
+/// carries transform channels, opacity or filters) wraps its whole run of children in one
+/// [`Group`] and recurses into it; a plain folder keeps drawing nothing.
+fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::ops::Range<usize>, walk: &Walk, out: &mut DisplayList) {
+    let clip_of = |id: LayerId| walk.clips.iter().find(|(l, _)| *l == id).map(|(_, c)| *c);
+    // A layer inside a compositing folder's run is drawn by that folder's pass, not on its
+    // own — except here, where this walk *is* that folder's pass. (Inside mask artwork every
+    // layer is flat artwork.)
+    let drawn_by_folder = |index: usize| -> bool {
+        if cx.masks.is_some() {
+            return false;
+        }
+        let mut cur = tl.layers.get(index).and_then(|l| l.parent);
+        for _ in 0..=MAX_LAYER_DEPTH {
+            let Some(p) = cur else { return false };
+            let Some(l) = tl.layer(p) else { return false };
+            if l.kind == LayerKind::Folder && l.composites() {
+                return Some(p) != walk.inside;
+            }
+            cur = l.parent;
+        }
+        false
+    };
+    for index in range.rev() {
+        let Some(layer) = tl.layers.get(index) else { continue };
         // Guide artwork is listed (marked, for editing) but never drawn; inside mask artwork
-        // it plays no part at all.
+        // it plays no part at all. The camera layer holds the camera, not artwork (ADR 0027).
         let is_guide = layer.kind == LayerKind::Guide;
-        // The camera layer holds the camera, not artwork (ADR 0027).
-        if !layer.visible || matches!(layer.kind, LayerKind::Folder | LayerKind::Camera) || (is_guide && cx.masks.is_some()) || (has_folders && tl.hidden_by_folder(index)) {
+        if !layer.visible || matches!(layer.kind, LayerKind::Camera) || (is_guide && cx.masks.is_some()) || (walk.has_folders && tl.hidden_by_folder(index)) {
+            continue;
+        }
+        // A folder (with or without semantics) inside a compositing run is that run's
+        // folder's business, not this pass's.
+        if layer.kind == LayerKind::Folder && drawn_by_folder(index) {
+            continue;
+        }
+        if layer.kind == LayerKind::Folder {
+            // A folder with compositing semantics draws its children as one group: their
+            // transforms chain through it, its opacity fades them together (overlaps don't
+            // show through), and its filters apply to the composite.
+            if layer.composites() && cx.masks.is_none() {
+                let run = tl.group_range(index);
+                let clip = layer.parent.and_then(clip_of).or(cx.clip);
+                let gid = out.groups.len() as u32;
+                out.groups.push(Group { parent: cx.group, alpha: layer.opacity_at(frame), blend: crate::BlendMode::Normal, filters: layer.filters.iter().map(crate::Filter::sanitized).collect(), clip });
+                let inner = Ctx {
+                    folders: cx.folders.mul(&layer.transform_at(frame)),
+                    immune: cx.immune || layer.camera_immune,
+                    clip,
+                    group: Some(gid),
+                    ..*cx
+                };
+                let run_walk = Walk { clips: walk.clips, has_folders: walk.has_folders, inside: Some(layer.id), play: walk.play };
+                eval_layers(doc, tl, frame, &inner, run.start + 1..run.end, &run_walk, out);
+            }
+            continue;
+        }
+        if drawn_by_folder(index) {
             continue;
         }
         let (clip, masks) = match (cx.masks, layer.kind) {
@@ -393,27 +464,39 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
         };
         let guide = cx.guide || is_guide;
         // A layer guided by a guide layer: its tweens follow the guide's first path.
-        let walk = layer.parent.and_then(|p| tl.layer(p)).filter(|g| g.kind == LayerKind::Guide).and_then(|g| guide_walk(g, frame));
-        let Some((kf_start, elements)) = evaluate_guided(layer, frame, walk.as_ref()) else { continue };
+        let guide_path = layer.parent.and_then(|p| tl.layer(p)).filter(|g| g.kind == LayerKind::Guide).and_then(|g| guide_walk(g, frame));
+        let Some((kf_start, elements)) = evaluate_guided(layer, frame, guide_path.as_ref()) else { continue };
         let layer_outline = cx.outline.or(if layer.outline { Some(layer.color) } else { None });
-        // Through a camera, each layer is placed by the camera layer and its own depth;
-        // the Moho-imported scene camera's view composes in front of that (ADR 0102). A
+        // Through a camera, each layer is placed by the camera layer and its own depth; the
+        // Moho-imported scene camera's view composes in front of that (ADR 0102), and
+        // enclosing folders chain their transforms through [`Ctx::folders`] (ADR 0103). A
         // `camera_immune` layer sees neither camera, and every top-level layer also carries
-        // its own transform channels.
+        // its own transform channels. Inside symbols the enclosing instance's transform
+        // already says where everything is, but a folder there still moves its run.
+        let own = if cx.depth == 0 || layer.kind == LayerKind::Folder { layer.transform_at(frame) } else { Affine::IDENTITY };
         let layer_xf = if cx.depth == 0 {
-            let mut xf = if layer.camera_immune {
+            let base = if layer.camera_immune || cx.immune {
                 cx.xf
             } else {
                 cx.scene_view.mul(&cx.camera.map_or(cx.xf, |c| c.view(&doc.stage, layer.depth)))
             };
-            xf = xf.mul(&layer.transform_at(frame));
-            xf
+            base.mul(&cx.folders).mul(&own)
         } else {
-            cx.xf
+            cx.xf.mul(&cx.folders).mul(&own)
+        };
+        // A layer with its own opacity or filters composites on its own too (Moho's layer
+        // effect stack): its items form one group. Mask artwork ignores opacity, and guide
+        // artwork never reaches the output.
+        let layer_group = if cx.masks.is_none() && !is_guide && (!layer.filters.is_empty() || layer.opacity_at(frame) < 1.0 - 1e-4) {
+            let gid = out.groups.len() as u32;
+            out.groups.push(Group { parent: cx.group, alpha: layer.opacity_at(frame), blend: crate::BlendMode::Normal, filters: layer.filters.iter().map(crate::Filter::sanitized).collect(), clip });
+            Some(gid)
+        } else {
+            None
         };
         for el in elements.iter() {
             // In the player, a symbol instance has its own path, and maybe properties a script set.
-            let child = match (&el.kind, play) {
+            let child = match (&el.kind, walk.play) {
                 (ElementKind::Symbol { .. }, Some(p)) => Some(p.child(el.id)),
                 _ => None,
             };
@@ -429,6 +512,7 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
             let (root_layer, root_el) = cx.root.unwrap_or((layer.id, el.id));
             let xf = layer_xf.mul(&el.transform);
             let color = cx.color.concat(&el.color);
+            let group = layer_group.or(cx.group);
             match &el.kind {
                 ElementKind::Shape(s) => out.items.push(DisplayItem {
                     path: s.path.clone(),
@@ -443,7 +527,7 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
                     clip,
                     masks,
                     guide,
-                    group: cx.group,
+                    group,
                     image: match &s.fill {
                         Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
                         _ => None,
@@ -462,7 +546,7 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
                     clip,
                     masks,
                     guide,
-                    group: cx.group,
+                    group,
                     image: None,
                 }),
                 ElementKind::Camera => {}
@@ -491,9 +575,9 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
                         out.groups.push(Group { parent: cx.group, alpha: fade, blend: *blend, filters: filters.iter().map(crate::Filter::sanitized).collect(), clip });
                         (cx.color.concat(&ColorEffect { alpha: 1.0, ..el.color }), Some(gid))
                     } else {
-                        (color, cx.group)
+                        (color, group)
                     };
-                    let inner = Ctx { xf, color, depth: cx.depth + 1, root: Some((root_layer, root_el)), outline: layer_outline, clip, masks, guide, group, camera: None, scene_view: Affine::IDENTITY };
+                    let inner = Ctx { xf, folders: Affine::IDENTITY, immune: false, color, depth: cx.depth + 1, root: Some((root_layer, root_el)), outline: layer_outline, clip, masks, guide, group, camera: None, scene_view: Affine::IDENTITY };
                     eval_timeline(doc, &sym.timeline, local, &inner, out, child.as_ref());
                 }
             }

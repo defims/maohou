@@ -39,7 +39,7 @@ const PARAM_WORDS: usize = 44;
 
 /// Whether any of `ops` needs the coverage slots.
 pub(crate) fn needs_coverage(ops: &[FilterOp]) -> bool {
-    ops.iter().any(|o| !matches!(o, FilterOp::Blur(_) | FilterOp::AdjustColor(_)))
+    ops.iter().any(|o| !matches!(o, FilterOp::Blur(_) | FilterOp::AdjustColor(_) | FilterOp::Noise { .. } | FilterOp::Pixelate { .. } | FilterOp::Threshold { .. }))
 }
 
 /// One pass's parameters.
@@ -158,6 +158,9 @@ pub(crate) fn passes(ops: &[FilterOp]) -> u64 {
             FilterOp::Shadow { blur: b, .. } | FilterOp::Bevel { blur: b, .. } => blur(b) + 2,
             FilterOp::GradientGlow { blur: b, .. } => 2 * (blur(b) + 1) + 1,
             FilterOp::AdjustColor(_) => 1,
+            // Declined to the CPU before planning (see gpu › plan); counted as one pass each
+            // so the bound stays finite if one ever gets through.
+            FilterOp::Noise { .. } | FilterOp::Pixelate { .. } | FilterOp::Threshold { .. } => 1,
         })
         .sum()
 }
@@ -226,7 +229,7 @@ impl Recorder<'_> {
         for op in ops {
             match op {
                 FilterOp::Blur(b) => self.blur(enc, true, 0, b),
-                FilterOp::Shadow { blur, dx, dy, strength, color, inner, knockout, hide_object } => {
+                FilterOp::Shadow { blur, dx, dy, strength, color, inner, knockout, hide_object, .. } => {
                     self.coverage(enc, *dx, *dy, *inner, 0);
                     self.blur(enc, false, 0, blur);
                     let flags = (u32::from(*inner) * INNER) | (u32::from(*knockout) * KNOCKOUT) | (u32::from(*hide_object) * HIDE);
@@ -266,6 +269,9 @@ impl Recorder<'_> {
                     let p = Params::new(self.w, self.h).matrix(m);
                     self.dispatch(enc, &self.pipes.adjust, p, dummy, self.pixels());
                 }
+                // These are declined to the CPU before planning (gpu › plan); they only get
+                // here if a filter chain mixed them in, which `plan` refuses first.
+                FilterOp::Noise { .. } | FilterOp::Pixelate { .. } | FilterOp::Threshold { .. } => {}
             }
         }
     }

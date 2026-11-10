@@ -535,6 +535,13 @@ impl GpuRenderer {
     /// One scene: prepared and binned, then its shown layers planned the same way.
     fn plan(&self, dl: &DisplayList, view: &View, depth: usize, bin_ms: &mut f32) -> Result<(Job, RenderStats), GpuError> {
         let (mut scene, stats) = prepare_scene(dl, view).map_err(GpuError::NeedsFull)?;
+        // Noise, pixelate and threshold filters (ADR 0103), and shadows with expansion,
+        // noise or a threshold, have no GPU pass: the CPU draws them.
+        let moho_layer_filter = |o: &anicraft_render::filters::FilterOp| matches!(o, anicraft_render::filters::FilterOp::Noise { .. } | anicraft_render::filters::FilterOp::Pixelate { .. } | anicraft_render::filters::FilterOp::Threshold { .. });
+        let moho_shadow_extras = |o: &anicraft_render::filters::FilterOp| matches!(o, anicraft_render::filters::FilterOp::Shadow { expansion, noise, threshold, .. } if *expansion != 0.0 || *noise != 0.0 || *threshold);
+        if scene.layers.iter().any(|l| l.filters.iter().any(|o| moho_layer_filter(o) || moho_shadow_extras(o))) {
+            return Err(GpuError::NeedsFull(NeedsFull::Filters));
+        }
         let t = Instant::now();
         let binned = binning::bin(&scene, view.width, view.height).map_err(GpuError::NeedsFull)?;
         *bin_ms += ms(t);

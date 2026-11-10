@@ -624,12 +624,22 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
             let pin = anicraft_engine::doc::pinned_stop(f);
             match f {
                 Filter::Blur { blur_x, blur_y, quality } => blur_rows(ui, blur_x, blur_y, quality, &mut changed),
-                Filter::DropShadow { blur_x, blur_y, strength, quality, angle, distance, color, inner, knockout, hide_object } => {
+                Filter::DropShadow { blur_x, blur_y, strength, quality, angle, distance, color, inner, knockout, hide_object, expansion, noise, threshold } => {
                     blur_rows(ui, blur_x, blur_y, quality, &mut changed);
                     shadow_rows(ui, fname, strength, color, &mut changed);
                     offset_row(ui, fname, angle, distance, "Shadow offset", &mut changed);
+                    row(ui, "Expansion", |ui| {
+                        if ui.add(egui::DragValue::new(expansion).prefix(" ").suffix(" px").speed(0.25).range(-100.0..=100.0).max_decimals(0)).named("Shadow expansion").changed() {
+                            changed = Some("Shadow expansion");
+                        }
+                    });
+                    row(ui, "Noise", |ui| {
+                        if a11y::slider(ui, noise, 0.0..=1.0, "Shadow noise", a11y::SliderLook { max_decimals: Some(2), ..Default::default() }).changed() {
+                            changed = Some("Shadow noise");
+                        }
+                    });
                     row_prose(ui, "Options", |ui| {
-                        for (v, label) in [(inner, "Inner"), (knockout, "Knockout"), (hide_object, "Hide object")] {
+                        for (v, label) in [(inner, "Inner"), (knockout, "Knockout"), (hide_object, "Hide object"), (threshold, "Threshold")] {
                             if crate::theme::checkbox(ui, v, label).changed() {
                                 changed = Some("Shadow options");
                             }
@@ -677,6 +687,27 @@ fn filter_rows(app: &mut App, ui: &mut egui::Ui, current: &[anicraft_engine::doc
                             }
                         });
                     }
+                }
+                Filter::Noise { amount } => {
+                    row(ui, "Amount", |ui| {
+                        if a11y::slider(ui, amount, 0.0..=1.0, "Noise amount", a11y::SliderLook { max_decimals: Some(2), ..Default::default() }).changed() {
+                            changed = Some("Noise amount");
+                        }
+                    });
+                }
+                Filter::Pixelate { size } => {
+                    row(ui, "Size", |ui| {
+                        if ui.add(egui::DragValue::new(size).prefix(" ").suffix(" px").speed(0.25).range(1.0..=256.0).max_decimals(0)).named("Pixelate size").changed() {
+                            changed = Some("Pixelate size");
+                        }
+                    });
+                }
+                Filter::Threshold { level } => {
+                    row(ui, "Level", |ui| {
+                        if a11y::slider(ui, level, 0.0..=1.0, "Threshold level", a11y::SliderLook { max_decimals: Some(2), ..Default::default() }).changed() {
+                            changed = Some("Threshold level");
+                        }
+                    });
                 }
             }
         });
@@ -1345,6 +1376,8 @@ fn tool_props(app: &mut App, ui: &mut egui::Ui) {
                 let what = match p {
                     Paint::Linear { .. } => "Linear gradient",
                     Paint::Radial { .. } => "Radial gradient",
+                    Paint::Reflected { .. } => "Reflected gradient",
+                    Paint::Angle { .. } => "Angle gradient",
                     Paint::Bitmap { .. } => "Bitmap fill",
                     Paint::Solid(_) => "Solid",
                 };

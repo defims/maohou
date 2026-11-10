@@ -172,6 +172,7 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
 
     // Render/document settings without a slot, counted when non-default.
     document_settings(&mut b.report, pd);
+    named_styles(&mut b, &root);
     let scene_anim = scene_animation(&mut b, get(&root, "animated_values").unwrap_or(&empty));
     if array(get(&root, "layercomps")).is_some_and(|s| !s.is_empty()) {
         b.report.skip("layer comps");
@@ -183,7 +184,7 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
 
     // The inline layer tree, flattened (bottom-first in, top-first out).
     let mut flat: Vec<FlatLayer> = Vec::new();
-    let into = layer::Inherit { parent: None, world: Affine::IDENTITY, alpha: 1.0, hide: None };
+    let into = layer::Inherit { parent: None, hide: None };
     layer::walk(&mut b, layers, &into, 0, &mut flat);
     let mut layers_out: Vec<_> = flat.into_iter().map(|f| Arc::new(f.layer)).collect();
     if layers_out.is_empty() {
@@ -228,6 +229,27 @@ fn document_settings(report: &mut Report, pd: &Value) {
     }
     if !json::string(get(pd, "soundtrack")).is_none_or(|s| s.is_empty()) {
         report.skip("document soundtrack");
+    }
+}
+
+/// The document's named style table (Moho's `styles[]`, ADR 0103): the fill/line a style
+/// defines, by name. Every document carries Moho's 12 built-in brush styles, which define
+/// nothing (their `define_*` flags are false) — those come across as bare names, and their
+/// brush settings stay in the sidecar. Shapes keep their inline paints either way.
+fn named_styles(b: &mut Builder, root: &Value) {
+    let frame = b.frame;
+    let Some(list) = array(get(root, "styles")) else { return };
+    if list.len() > anicraft_doc::MAX_STYLES {
+        b.report.skip("styles past 1,000");
+    }
+    for s in list.iter().take(anicraft_doc::MAX_STYLES) {
+        let name = json::string(get(s, "name")).unwrap_or_default();
+        let defined = |k: &str| json::boolean(get(s, k)).unwrap_or(false);
+        let color = |k: &str| get(s, k).and_then(Channel::parse).and_then(|c| channel::sample_color01(&c, frame));
+        let fill = defined("define_fill_color").then(|| color("fill_color")).flatten();
+        let line = defined("define_line_col").then(|| color("line_color")).flatten();
+        let width = defined("define_line_width").then(|| json::num(get(s, "line_width"))).flatten().map(|w| w as f32);
+        b.doc.styles.push(Arc::new(anicraft_doc::Style { name, fill, line, line_width: width }));
     }
 }
 

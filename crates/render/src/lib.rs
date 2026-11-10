@@ -262,6 +262,8 @@ pub enum NeedsFull {
     Filters,
     /// More bitmaps at once, or larger ones, than the other renderer handles.
     Bitmaps,
+    /// Gradient paints beyond linear and radial (reflected, angle): the CPU draws them.
+    Gradients,
 }
 
 impl std::fmt::Display for NeedsFull {
@@ -271,6 +273,7 @@ impl std::fmt::Display for NeedsFull {
             NeedsFull::Groups => "deeply nested symbols",
             NeedsFull::Filters => "deeply nested filters",
             NeedsFull::Bitmaps => "too many or too large bitmaps",
+            NeedsFull::Gradients => "reflected and angle gradients",
         })
     }
 }
@@ -364,6 +367,10 @@ pub fn prepare_scene(dl: &DisplayList, view: &View) -> Result<(Scene, RenderStat
             slot.push(op);
             layers.push(setup.layer);
         }
+    }
+    // Gradient paints beyond linear and radial: the other renderer falls back to the CPU.
+    if dl.items.iter().any(|it| !it.guide && it.outline.is_none() && matches!(it.fill, Some(Paint::Reflected { .. } | Paint::Angle { .. }))) {
+        return Err(NeedsFull::Gradients);
     }
     let mut stats = RenderStats { items: dl.items.len(), ..Default::default() };
     let mut ops: Vec<Prepared> = Vec::with_capacity(prepared.len());

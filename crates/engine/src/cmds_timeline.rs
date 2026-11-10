@@ -49,6 +49,10 @@ pub fn specs() -> Vec<CommandSpec> {
         c("layer.add_motion_guide", "Add Classic Motion Guide", "Insert/Timeline", None, "{layer?}", true, add_motion_guide),
         c("layer.set_transform", "Layer Transform Key", "", None, "{translation? [x,y], scale? [x,y], rotation? (degrees), shear? [x,y], flip_h?, flip_v?, origin? [x,y], at_frame?, layer?}", true, set_transform),
         c("layer.clear_transform", "Clear Layer Transform", "", None, "{layer?}", true, clear_transform),
+        c("layer.set_opacity", "Layer Opacity", "", None, "{opacity (0..=1), at_frame?, layer?}", true, set_opacity),
+        c("layer.clear_opacity", "Clear Layer Opacity", "", None, "{layer?}", true, clear_opacity),
+        c("layer.set_filters", "Layer Effects", "", None, "{filters: [{type: blur|drop_shadow|glow|adjust_color|noise|pixelate|threshold, ...}], layer?} (replaces the stack)", true, set_filters),
+        c("layer.clear_filters", "Clear Layer Effects", "", None, "{layer?}", true, clear_filters),
     ]
 }
 
@@ -70,9 +74,6 @@ fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = target_layers(s, p)?;
     for id in &ids {
         let layer = s.doc.timeline_mut(s.scene).layer_mut(*id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
-        if layer.kind == LayerKind::Folder {
-            return Err(EngineError::State("a folder cannot carry a layer transform (its children would need group rendering, which comes later)".into()));
-        }
         if let Some((x, y)) = translation {
             layer.translation.set_key(frame, anicraft_geom::Vec2::new(x, y));
             touched += 1;
@@ -120,6 +121,67 @@ fn clear_transform(s: &mut Session, p: &Value) -> Result<Value> {
         layer.flip_h = anicraft_doc::Channel::default();
         layer.flip_v = anicraft_doc::Channel::default();
         layer.origin = anicraft_geom::Vec2::ZERO;
+    }
+    Ok(json!({"layers": cleared}))
+}
+
+/// Writes a key on the layer's opacity channel (Moho's layer alpha; ADR 0103). `0..=1`.
+fn set_opacity(s: &mut Session, p: &Value) -> Result<Value> {
+    let frame = opt_u32(p, "at_frame")?.unwrap_or(s.frame).min(100_000);
+    let (opacity,) = opt_f32(p, "opacity")?.map(|v| (v,)).ok_or_else(|| EngineError::Param("opacity (0..=1) is required".into()))?;
+    let opacity = opacity.clamp(0.0, 1.0);
+    let ids = target_layers(s, p)?;
+    for id in &ids {
+        let layer = s.doc.timeline_mut(s.scene).layer_mut(*id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
+        layer.opacity.set_key(frame, opacity);
+    }
+    Ok(json!({"opacity": opacity, "frame": frame, "layers": ids.len()}))
+}
+
+/// Removes the layer's opacity channel (fully opaque again).
+fn clear_opacity(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut cleared = 0usize;
+    for id in target_layers(s, p)? {
+        let layer = s.doc.timeline_mut(s.scene).layer_mut(id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
+        if !layer.opacity.is_empty() {
+            cleared += 1;
+        }
+        layer.opacity = anicraft_doc::Channel::default();
+    }
+    Ok(json!({"layers": cleared}))
+}
+
+/// Replaces the layer's effect stack (Moho's layer effects; ADR 0103). Each filter is the
+/// file's own `{"type": ...}` form, values clamped to range; at most 16.
+fn set_filters(s: &mut Session, p: &Value) -> Result<Value> {
+    let Some(list) = p.get("filters").and_then(Value::as_array) else {
+        return Err(EngineError::Param("filters: an array of {\"type\": ...} filter objects".into()));
+    };
+    if list.len() > anicraft_doc::MAX_LAYER_FILTERS {
+        return Err(EngineError::Param(format!("at most {} filters per layer (got {})", anicraft_doc::MAX_LAYER_FILTERS, list.len())));
+    }
+    let mut filters = Vec::with_capacity(list.len());
+    for f in list {
+        let parsed: anicraft_doc::Filter = serde_json::from_value(f.clone()).map_err(|e| EngineError::Param(format!("unreadable filter: {e}")))?;
+        filters.push(parsed.sanitized());
+    }
+    let ids = target_layers(s, p)?;
+    for id in &ids {
+        let layer = s.doc.timeline_mut(s.scene).layer_mut(*id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
+        layer.filters = filters.clone();
+    }
+    Ok(json!({"filters": filters.iter().map(anicraft_doc::Filter::label).collect::<Vec<_>>(), "layers": ids.len()}))
+}
+
+/// Removes the layer's whole effect stack.
+fn clear_filters(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut cleared = 0usize;
+    for id in target_layers(s, p)? {
+        let layer = s.doc.timeline_mut(s.scene).layer_mut(id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
+        if !layer.filters.is_empty() {
+            cleared += 1;
+        }
+        layer.filters = Vec::new();
     }
     Ok(json!({"layers": cleared}))
 }

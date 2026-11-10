@@ -7,16 +7,21 @@
 //! unbroken run under it (what `Timeline::repair_masks` and `group_range` expect).
 //!
 //! Type mapping: Mesh/Image/Text layers carry content; Group/Bone/Switch layers flatten to
-//! folders (stage 1 freezes a switch at its current selection and keeps the variants as
-//! hidden children); bones, effect stacks, physics and the camera are counted in the report.
+//! folders that composite (ADR 0103): the container's transform channels, its `layer_effects`
+//! alpha and its effect stack stay on the folder layer itself, and evaluation renders its
+//! whole run as one group — so a transformed, faded or filtered group behaves as in Moho, and
+//! its children keep their own channels instead of baking their ancestors'. A container with
+//! none of those stays a pure organisational folder. A switch freezes at its current
+//! selection and keeps the variants as hidden children; bones and physics are counted in the
+//! report.
 
 use crate::anim;
 use crate::channel::{self, Channel};
-use crate::import::Builder;
+use crate::import::{Builder, MOHO_DPI};
 use crate::json::{self, array, get};
 use crate::mesh;
 use crate::text;
-use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Keyframe, Layer, LayerId, LayerKind, Paint, Shape};
+use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind, Paint, Shape};
 use anicraft_geom::{Affine, FillRule, Path};
 use serde_json::Value;
 use std::sync::Arc;
@@ -42,12 +47,11 @@ enum Content<'doc> {
     Text(&'doc Value),
 }
 
-/// What a layer inherits from its ancestors: where it sits in the tree, its accumulated
-/// inch-space transform and alpha, and the switch-variant names a parent froze out of view.
+/// What a layer inherits from its ancestors: where it sits in the tree (a container's
+/// children name it as their parent; evaluation chains its transform and effects), and the
+/// switch-variant names a parent froze out of view.
 pub(crate) struct Inherit<'a> {
     pub parent: Option<LayerId>,
-    pub world: Affine,
-    pub alpha: f32,
     pub hide: Option<&'a [String]>,
 }
 
@@ -73,24 +77,16 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
     let mut l = Layer::new(id, name);
     l.parent = into.parent;
     l.visible = layer_visibility(b, layer) && into.hide.is_none_or(|h| !h.contains(&l.name));
-    // The layer's own transform: animated channels (stage 2) on a leaf layer, or the static
-    // bake of stage 1. A container's transform propagates to its children in Moho; AniCraft
-    // folders carry nothing, so an animated container keeps the static bake and says so.
+    // The layer's effect stack: opacity and the static filters (ADR 0103). Any layer kind
+    // carries them in Moho.
+    l.opacity = layer_opacity(b, layer);
+    l.filters = layer_filters(b, layer);
+    // The layer's transform: animated channels on a leaf layer (stage 2), channels on a
+    // container (stage 3's group semantics), or the static bake into the drawn elements.
     let channels = anim::layer_transform_channels(get(layer, "transforms").unwrap_or(&Value::Null), &mut b.report);
-    let animated_leaf = channels.is_animated() && !matches!(ty.as_str(), "GroupLayer" | "BoneLayer" | "SwitchLayer");
-    if channels.is_animated() && !animated_leaf {
-        b.report.skip("group transform animation (children drawn without it)");
-    }
-    let (local, alpha) = if animated_leaf {
-        if into.world != Affine::IDENTITY {
-            b.report.skip("animated layer inside a transformed group (its motion composes outside the group transform)");
-        }
-        (Affine::IDENTITY, layer_alpha(b, layer))
-    } else {
-        layer_transform(b, layer)
-    };
-    let alpha = alpha * into.alpha;
-    let world = into.world.mul(&local);
+    let is_container = matches!(ty.as_str(), "GroupLayer" | "BoneLayer" | "SwitchLayer");
+    let animated_leaf = channels.is_animated() && !is_container;
+    let mut world = Affine::IDENTITY;
     if animated_leaf {
         l.translation = channels.translation;
         l.scale = channels.scale;
@@ -101,20 +97,37 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
         if let Some(origin) = get(layer, "origin").and_then(|v| json::vec2(Some(v))) {
             l.origin = b.to_px.apply(origin);
         }
+    } else if is_container {
+        // The container keeps its transform as channels (a static one is a single key) and
+        // composites its run; children reference it by parent, so nothing bakes. Moho writes
+        // static default keys on every layer: an identity transform stays off the folder.
+        if channels.has_values() && !channels.is_neutral() {
+            l.translation = channels.translation;
+            l.scale = channels.scale;
+            l.rotation = channels.rotation;
+            l.shear = channels.shear;
+            l.flip_h = channels.flip_h;
+            l.flip_v = channels.flip_v;
+            if let Some(origin) = get(layer, "origin").and_then(|v| json::vec2(Some(v))) {
+                l.origin = b.to_px.apply(origin);
+            }
+        }
+    } else {
+        world = layer_transform(b, layer);
     }
     match ty.as_str() {
         "MeshLayer" => {
             count_layer_extras(b, layer);
             let m = get(layer, "mesh").unwrap_or(&Value::Null);
-            finish_leaf(b, l, world, alpha, Content::Mesh(m), out);
+            finish_leaf(b, l, world, Content::Mesh(m), out);
         }
         "ImageLayer" => {
             count_layer_extras(b, layer);
-            finish_leaf(b, l, world, alpha, Content::Image(layer), out);
+            finish_leaf(b, l, world, Content::Image(layer), out);
         }
         "TextLayer" => {
             count_layer_extras(b, layer);
-            finish_leaf(b, l, world, alpha, Content::Text(layer), out);
+            finish_leaf(b, l, world, Content::Text(layer), out);
         }
         "GroupLayer" | "BoneLayer" | "SwitchLayer" => {
             l.kind = LayerKind::Folder;
@@ -129,10 +142,10 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
                 let hide_kids = switch_hide(b, layer);
                 let mut combined: Vec<String> = into.hide.unwrap_or(&[]).to_vec();
                 combined.extend(hide_kids.unwrap_or_default());
-                let kids_into = Inherit { parent: Some(id), world, alpha, hide: (!combined.is_empty()).then_some(combined.as_slice()) };
+                let kids_into = Inherit { parent: Some(id), hide: (!combined.is_empty()).then_some(combined.as_slice()) };
                 walk(b, kids, &kids_into, depth + 1, out);
             } else {
-                let kids_into = Inherit { parent: Some(id), world, alpha, hide: into.hide };
+                let kids_into = Inherit { parent: Some(id), hide: into.hide };
                 walk(b, kids, &kids_into, depth + 1, out);
             }
         }
@@ -195,31 +208,28 @@ fn count_skeleton(b: &mut Builder, skeleton: Option<&Value>) {
     }
 }
 
-/// Per-layer features beyond the static transform, counted when non-default.
+/// Per-layer features beyond the imported transform and effect stack, counted when
+/// non-default.
 fn count_layer_extras(b: &mut Builder, layer: &Value) {
     let frame = b.frame;
     let ch = |k: &str| get(layer, k).and_then(Channel::parse);
-    // Effect stack (alpha/visibility applied; the rest reported).
+    // Effect stack parts with no slot yet (blur/noise/pixelation/threshold/shadow imported).
     let fx = get(layer, "layer_effects");
-    for (key, what) in [("blur", "layer blur"), ("noise", "layer noise"), ("pixelation", "layer pixelation"), ("threshold", "layer threshold"), ("ambient_occlusion", "layer ambient occlusion")] {
-        if fx.and_then(|f| get(f, key)).and_then(Channel::parse).is_some_and(|c| channel::sample_f64(&c, frame).is_some_and(|v| v.abs() > 1e-6)) {
-            b.report.skip(what);
-        }
+    if fx.and_then(|f| get(f, "ambient_occlusion")).and_then(Channel::parse).is_some_and(|c| channel::sample_f64(&c, frame).is_some_and(|v| v.abs() > 1e-6)) {
+        b.report.skip("layer ambient occlusion");
     }
-    let on = |k: &str| json::boolean(get(layer, k).and_then(|g| get(g, "on"))).unwrap_or(false);
-    if on("layer_outline") {
+    // The `on` switches are Bool channels, not plain booleans.
+    let switch_on = |k: &str| get(layer, k).and_then(|g| get(g, "on")).and_then(Channel::parse).is_some_and(|c| channel::sample_bool(&c, frame).unwrap_or(false));
+    if switch_on("layer_outline") {
         b.report.skip("layer outlines");
     }
-    if on("layer_shading") {
+    if switch_on("layer_shading") {
         b.report.skip("layer shading");
     }
-    if on("layer_shadow") {
-        b.report.skip("layer shadows");
-    }
-    if on("motion_blur") {
+    if switch_on("motion_blur") {
         b.report.skip("motion blur");
     }
-    if on("perspective_shadow") {
+    if switch_on("perspective_shadow") {
         b.report.skip("perspective shadows");
     }
     if json::integer(get(layer, "blend_mode")).is_some_and(|m| m != 0) {
@@ -257,21 +267,89 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     }
 }
 
-/// The layer's static alpha: the effect stack's alpha channel at the import frame (its
-/// animation is a stage-3 effect-stack matter; visibility stays on the layer).
-fn layer_alpha(b: &Builder, layer: &Value) -> f32 {
-    let a = get(layer, "layer_effects")
-        .and_then(|fx| get(fx, "alpha"))
-        .and_then(Channel::parse)
-        .and_then(|c| channel::sample_f64(&c, b.frame))
-        .unwrap_or(1.0);
-    (a as f32).clamp(0.0, 1.0)
+/// The layer's opacity channel: Moho's `layer_effects.alpha` (0..=1), key for key. A single
+/// key at the default is no channel at all.
+fn layer_opacity(b: &mut Builder, layer: &Value) -> anicraft_doc::Channel<f32> {
+    let mut out = anicraft_doc::Channel::default();
+    if let Some(fx) = get(layer, "layer_effects") {
+        anim::read_channel(&mut out, fx, "alpha", &mut b.report, 1, |ch, i| {
+            (channel::sample_f64_at(ch, i).unwrap_or(1.0).clamp(0.0, 1.0)) as f32
+        });
+    }
+    if out.keys.len() == 1 && (out.keys[0].val - 1.0).abs() < 1e-6 {
+        out.keys.clear();
+    }
+    out
+}
+
+/// The layer's effect stack (ADR 0103), read at the import frame: Moho's `layer_effects`
+/// scalars plus its `layer_shadow` group. Channels become static values here — animated
+/// effect parameters are a later milestone and ride in the sidecar; `animated_layer_effects`
+/// is counted when the file says so.
+fn layer_filters(b: &mut Builder, layer: &Value) -> Vec<Filter> {
+    let frame = b.frame;
+    let dpi = MOHO_DPI as f64;
+    let mut out = Vec::new();
+    let fx = get(layer, "layer_effects");
+    let val = |root: Option<&Value>, k: &str| root.and_then(|f| get(f, k)).and_then(Channel::parse).and_then(|c| channel::sample_f64(&c, frame));
+    // Blur: Moho's radius is a document distance (inches); a three-pass box blur reaches
+    // Moho's soft look.
+    if let Some(v) = val(fx, "blur").filter(|v| *v > 1e-6) {
+        let px = ((v * dpi) as f32).clamp(0.0, anicraft_doc::MAX_BLUR);
+        out.push(Filter::Blur { blur_x: px, blur_y: px, quality: 3 });
+    }
+    if let Some(v) = val(fx, "noise").filter(|v| *v > 1e-6) {
+        out.push(Filter::Noise { amount: (v as f32).clamp(0.0, 1.0) });
+    }
+    if let Some(v) = val(fx, "pixelation").filter(|v| *v > 1e-6) {
+        out.push(Filter::Pixelate { size: ((v * dpi) as f32).clamp(1.0, 256.0) });
+    }
+    if let Some(v) = val(fx, "threshold").filter(|v| *v > 1e-6) {
+        out.push(Filter::Threshold { level: (v as f32).clamp(0.0, 1.0) });
+    }
+    // The shadow: a Bool-channel switch and its parameter group.
+    let shadow = get(layer, "layer_shadow");
+    let on = shadow.and_then(|s| get(s, "on")).and_then(Channel::parse).is_some_and(|c| channel::sample_bool(&c, frame).unwrap_or(false));
+    if on {
+        let angle = (-(val(shadow, "angle").unwrap_or(0.0))).to_degrees() as f32;
+        let distance = ((val(shadow, "offset").unwrap_or(0.0) * dpi) as f32).clamp(-1000.0, 1000.0);
+        let blur_px = ((val(shadow, "blur").unwrap_or(0.0) * dpi) as f32).clamp(0.0, anicraft_doc::MAX_BLUR);
+        let expansion = ((val(shadow, "expansion").unwrap_or(0.0) * dpi) as f32).clamp(-100.0, 100.0);
+        let color = shadow
+            .and_then(|s| get(s, "color"))
+            .and_then(Channel::parse)
+            .and_then(|c| channel::sample_color01(&c, frame))
+            .unwrap_or(anicraft_doc::Rgba::BLACK);
+        if shadow.and_then(|s| json::boolean(get(s, "clip_to_group"))).unwrap_or(false) {
+            b.report.skip("shadow clipped to its group (drawn unclipped)");
+        }
+        if val(shadow, "noise_scale").is_some_and(|v| (v - 1.0).abs() > 1e-6) {
+            b.report.skip("shadow noise scale (grain drawn uniform)");
+        }
+        out.push(Filter::DropShadow {
+            blur_x: blur_px,
+            blur_y: blur_px,
+            strength: 1.0,
+            quality: 3,
+            angle: angle.rem_euclid(360.0),
+            distance,
+            color,
+            inner: false,
+            knockout: false,
+            hide_object: false,
+            expansion,
+            noise: (val(shadow, "noise_amp").unwrap_or(0.0) as f32).clamp(0.0, 1.0),
+            threshold: shadow.and_then(|s| get(s, "threshold")).and_then(Channel::parse).is_some_and(|c| channel::sample_bool(&c, frame).unwrap_or(false)),
+        });
+    }
+    out
 }
 
 /// Reads a layer's static transform channels (inch space, y up) around its origin pivot.
 /// 3D-only channels are counted when they carry values. Called for layers whose transform
-/// channels don't animate — animated leaves go through `anim::layer_transform_channels`.
-fn layer_transform(b: &mut Builder, layer: &Value) -> (Affine, f32) {
+/// channels don't animate and aren't kept on the layer — animated leaves and containers go
+/// through `anim::layer_transform_channels`.
+fn layer_transform(b: &mut Builder, layer: &Value) -> Affine {
     let frame = b.frame;
     let empty = Value::Null;
     let tr = get(layer, "transforms").unwrap_or(&empty);
@@ -309,23 +387,22 @@ fn layer_transform(b: &mut Builder, layer: &Value) -> (Affine, f32) {
     // Moho pivots layer rotation, shear and scale at the layer origin:
     // p ↦ origin + translation + M · (p − origin).
     let m = Affine::translate(origin.x + tx, origin.y + ty).mul(&Affine::rotate(rot)).mul(&shear).mul(&Affine::scale(sx, sy)).mul(&Affine::translate(-origin.x, -origin.y));
-    let m = if m.is_finite() {
+    if m.is_finite() {
         m
     } else {
         b.report.skip("unreadable layer transforms");
         Affine::IDENTITY
-    };
-    (m, layer_alpha(b, layer))
+    }
 }
 
 /// A leaf layer's content: one keyframe spanning the imported frame range.
-fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, alpha: f32, content: Content, out: &mut Vec<FlatLayer>) {
+fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, content: Content, out: &mut Vec<FlatLayer>) {
     let mut k = Keyframe::new(0, b.duration);
     let mut els: Vec<Arc<Element>> = Vec::new();
     match content {
-        Content::Mesh(m) => mesh::mesh_elements(b, m, world, alpha, &mut els),
-        Content::Image(src) => image_elements(b, src, world, alpha, &mut els),
-        Content::Text(src) => text::text_elements(b, src, world, alpha, &mut els),
+        Content::Mesh(m) => mesh::mesh_elements(b, m, world, &mut els),
+        Content::Image(src) => image_elements(b, src, world, &mut els),
+        Content::Text(src) => text::text_elements(b, src, world, &mut els),
     }
     k.elements = els;
     l.keyframes = vec![Arc::new(k)];
@@ -334,7 +411,7 @@ fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, alpha: f32, content
 
 /// An image layer: its file (found in the package or beside the document) becomes a bitmap
 /// rectangle of the image's natural size, anchored at the layer origin.
-fn image_elements(b: &mut Builder, layer: &Value, world: Affine, alpha: f32, out: &mut Vec<Arc<Element>>) {
+fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {
     let Some(file) = fileref(layer) else {
         b.report.skip("image layers without a file reference");
         return;
@@ -361,12 +438,11 @@ fn image_elements(b: &mut Builder, layer: &Value, world: Affine, alpha: f32, out
     let h = bh as f32 / b.dpi;
     let path = Path::rect(-w * 0.5, -h * 0.5, w, h);
     let paint = Paint::Bitmap { bitmap: id, repeat: false, matrix: Affine::IDENTITY };
-    let fx = ColorEffect { alpha: alpha.clamp(0.0, 1.0), ..ColorEffect::default() };
     out.push(Arc::new(Element {
         id: ElementId(b.doc.alloc_id()),
         name: String::new(),
         transform: b.to_px.mul(&world),
-        color: fx,
+        color: ColorEffect::default(),
         kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false }),
     }));
 }

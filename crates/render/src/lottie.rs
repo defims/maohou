@@ -243,6 +243,11 @@ fn sample(item: &DisplayItem, opacity: f32, masks: Vec<Bez>, report: &mut HashSe
                 report.insert("bitmap fills (not exported yet)");
                 None
             }
+            // Lottie knows only linear and radial gradients.
+            Some(Paint::Reflected { .. }) | Some(Paint::Angle { .. }) => {
+                report.insert("reflected and angle gradient fills (not exported)");
+                None
+            }
             None => None,
         };
         let stroke = item.stroke.as_ref().and_then(|s| {

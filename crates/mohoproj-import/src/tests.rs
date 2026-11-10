@@ -4,6 +4,7 @@
 
 use crate::import::{import_json, Report};
 use crate::zip;
+use anicraft_geom::Vec2;
 use serde_json::{json, Value};
 
 /// A minimal legal document (31 top-level keys are Moho's; only what the reader touches is
@@ -172,7 +173,52 @@ fn gradients_and_strokes_become_paints() {
     let anicraft_doc::ElementKind::Shape(line) = &els[1].kind else { panic!("stroke element") };
     let stroke = line.stroke.as_ref().unwrap();
     assert!((stroke.width - 0.00625).abs() < 1e-9, "line width stays in document units; the transform carries the scale");
-    assert!(report.skipped.contains_key("gradient geometry (approximated from shape bounds)"));
+    assert!(report.skipped.is_empty(), "all four gradient types map now: {:?}", report.skipped);
+}
+
+#[test]
+fn reflected_and_angle_gradients_import_with_effect_geometry() {
+    let mut root = minimal();
+    root["layers"] = json!([
+        {"type": "MeshLayer", "name": "L", "mesh": {
+            "points": [
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 0.0, "y": 1.0})]), "curves": []},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 1.0, "y": 1.0})]), "curves": []},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 1.0, "y": 0.0})]), "curves": []},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 0.0, "y": 0.0})]), "curves": []}
+            ],
+            "curves": [
+                {"closed": true, "points": [{"point": 0, "smoothness": channel("Val", vec![0], vec![json!(0.0)]), "weight_in": channel("Val", vec![0], vec![json!(1.0)]), "weight_out": channel("Val", vec![0], vec![json!(1.0)]), "offset_in": channel("Val", vec![0], vec![json!(0.0)]), "offset_out": channel("Val", vec![0], vec![json!(0.0)])}, {"point": 1, "smoothness": channel("Val", vec![0], vec![json!(0.0)]), "weight_in": channel("Val", vec![0], vec![json!(1.0)]), "weight_out": channel("Val", vec![0], vec![json!(1.0)]), "offset_in": channel("Val", vec![0], vec![json!(0.0)]), "offset_out": channel("Val", vec![0], vec![json!(0.0)])}, {"point": 2, "smoothness": channel("Val", vec![0], vec![json!(0.0)]), "weight_in": channel("Val", vec![0], vec![json!(1.0)]), "weight_out": channel("Val", vec![0], vec![json!(1.0)]), "offset_in": channel("Val", vec![0], vec![json!(0.0)]), "offset_out": channel("Val", vec![0], vec![json!(0.0)])}, {"point": 3, "smoothness": channel("Val", vec![0], vec![json!(0.0)]), "weight_in": channel("Val", vec![0], vec![json!(1.0)]), "weight_out": channel("Val", vec![0], vec![json!(1.0)]), "offset_in": channel("Val", vec![0], vec![json!(0.0)]), "offset_out": channel("Val", vec![0], vec![json!(0.0)])}]}
+            ],
+            "shapes": [
+                {"has_fill": true, "has_outline": false,
+                 "effect_offset": channel("Vec2", vec![0], vec![json!({"x": 0.25, "y": 0.0})]),
+                 "effect_rotation": channel("Val", vec![0], vec![json!(1.5707964)]),
+                 "effect_scale": channel("Val", vec![0], vec![json!(2.0)]),
+                 "edges": {"curve": [0, 0, 0, 0], "segment": [0, 1, 2, 3], "flag": [0, 0, 0, 0]},
+                 "style": {"fill_style_id": 9, "fill_style": {"type": "SS_Gradient2", "gradient_type": 2, "through_alpha": false, "gradients": [
+                    {"location": channel("Val", vec![0], vec![json!(0.0)]), "color": channel("Color", vec![0], vec![json!({"r": 1.0, "g": 0.0, "b": 0.0, "a": 0.0})])},
+                    {"location": channel("Val", vec![0], vec![json!(1.0)]), "color": channel("Color", vec![0], vec![json!({"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0})])}
+                 ]}}}
+            ]
+        }}
+    ]);
+    let (doc, _report) = import(&root);
+    let els = &doc.timeline(0).layers[0].keyframes[0].elements;
+    let anicraft_doc::ElementKind::Shape(fill) = &els[0].kind else { panic!("fill element") };
+    // Reflected maps to its own paint; through_alpha=false means opaque stops.
+    let Some(anicraft_doc::Paint::Reflected { start, end, stops }) = &fill.fill else { panic!("reflected gradient, got {:?}", fill.fill) };
+    assert_eq!(stops[0].color.a, 1.0, "through_alpha false makes the stops opaque");
+    // The axis runs from the shape's centre (the mirror point) to the left edge, and the
+    // effect transform turns it 90° about the centre, scales it ×2 and shifts it by 0.25"
+    // (all in shape space; the element transform carries the inch→pixel mapping).
+    let centre = Vec2::new(0.5, 0.5);
+    let expected = |p: Vec2| {
+        let q = (p - centre) * 2.0;
+        Vec2::new(q.x * 1.5707964_f32.cos() - q.y * 1.5707964_f32.sin(), q.x * 1.5707964_f32.sin() + q.y * 1.5707964_f32.cos()) + centre + Vec2::new(0.25, 0.0)
+    };
+    assert!((*start - expected(centre)).length() < 1e-4, "{start:?}");
+    assert!((*end - expected(Vec2::new(0.0, 0.5))).length() < 1e-4, "{end:?}");
 }
 
 #[test]
@@ -188,11 +234,47 @@ fn unsupported_things_count_and_degrade() {
     let (doc, report) = import(&root);
     assert_eq!(report.skipped.get("skeleton bones"), Some(&1));
     assert!(report.skipped.contains_key("particle layers"));
-    assert!(report.skipped.contains_key("layer blur"));
+    assert!(!report.skipped.contains_key("layer blur"), "blur imports as a layer effect now");
     assert!(report.skipped.contains_key("layer blend modes"));
+    // The blur sits on the layer's effect stack (0.25" at 320 px/inch = 80 px).
+    let l = doc.timeline(0).layers.iter().find(|l| l.name == "L").unwrap();
+    assert_eq!(l.filters, vec![anicraft_doc::Filter::Blur { blur_x: 80.0, blur_y: 80.0, quality: 3 }]);
     // The bones layer still arrives, as a folder.
     let rig = doc.timeline(0).layers.iter().find(|l| l.name == "Rig").unwrap();
     assert_eq!(rig.kind, anicraft_doc::LayerKind::Folder);
+}
+
+#[test]
+fn group_layers_keep_their_transform_opacity_and_filters() {
+    let mut root = minimal();
+    root["layers"] = json!([
+        {"type": "GroupLayer", "name": "G",
+         "origin": {"x": 1.0, "y": 1.0},
+         "layer_effects": {"alpha": channel("Val", vec![0, 10], vec![json!(1.0), json!(0.2)])},
+         "layer_shadow": {"on": channel("Bool", vec![0], vec![json!(true)]), "angle": channel("Val", vec![0], vec![json!(0.0)]), "blur": channel("Val", vec![0], vec![json!(0.05)]), "offset": channel("Val", vec![0], vec![json!(0.1)]), "expansion": channel("Val", vec![0], vec![json!(0.02)]), "noise_amp": channel("Val", vec![0], vec![json!(0.5)]), "threshold": channel("Bool", vec![0], vec![json!(true)]), "color": channel("Color", vec![0], vec![json!({"r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0})])},
+         "transforms": {"translation": channel("Vec3", vec![0], vec![json!({"x": 0.5, "y": -0.25, "z": 0.0})]), "scale": channel("Vec3", vec![0], vec![json!({"x": 2.0, "y": 1.0, "z": 1.0})])},
+         "layers": [
+            {"type": "MeshLayer", "name": "Kid", "mesh": {"points": [], "curves": [], "shapes": []}}
+         ]}
+    ]);
+    let (doc, _report) = import(&root);
+    let g = doc.timeline(0).layers.iter().find(|l| l.name == "G").unwrap();
+    let kid = doc.timeline(0).layers.iter().find(|l| l.name == "Kid").unwrap();
+    assert_eq!(kid.parent, Some(g.id), "the child points at the folder");
+    // The container's static transform lives on the folder as channels (inch → px, y flip).
+    assert_eq!(g.translation.keys.first().map(|k| k.val), Some(Vec2::new(160.0, 80.0)));
+    assert_eq!(g.scale.keys.first().map(|k| k.val), Some(Vec2::new(2.0, 1.0)));
+    assert_eq!(g.origin, Vec2::new(960.0, 40.0), "the origin maps as a point: 1 inch right of centre, 1 inch up");
+    // Opacity keys arrive as a channel.
+    assert_eq!(g.opacity.keys.len(), 2);
+    assert!((g.opacity.sample_or(10.0, 1.0) - 0.2).abs() < 1e-6);
+    // The shadow stack: blur 0.05"→16 px, offset 0.1"→32 px, expansion 0.02"→6.4 px.
+    assert_eq!(g.filters.len(), 1);
+    let Some(anicraft_doc::Filter::DropShadow { blur_x, distance, expansion, noise, threshold, .. }) = g.filters.first() else { panic!("a shadow") };
+    assert!((blur_x - 16.0).abs() < 1e-4 && (distance - 32.0).abs() < 1e-4 && (expansion - 6.4).abs() < 1e-3);
+    assert!((noise - 0.5).abs() < 1e-6 && *threshold);
+    // The child carries none of it: nothing bakes.
+    assert!(kid.translation.keys.is_empty());
 }
 
 #[test]

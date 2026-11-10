@@ -299,6 +299,8 @@ fn paint_kind(p: &Paint) -> &'static str {
         Paint::Solid(_) => "solid",
         Paint::Linear { .. } => "linear",
         Paint::Radial { .. } => "radial",
+        Paint::Reflected { .. } => "reflected",
+        Paint::Angle { .. } => "angle",
         Paint::Bitmap { .. } => "bitmap",
     }
 }

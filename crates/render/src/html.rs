@@ -88,6 +88,7 @@ pub struct HtmlExport {
 const FILTERS: &str = "filters (not exported; drawn without them)";
 const BLENDS: &str = "Subtract and Invert blending (drawn normally)";
 const BITMAP_TINT: &str = "tints on bitmap fills (drawn untinted)";
+const REFLECTED_ANGLE_GRADIENTS: &str = "reflected and angle gradient fills (drawn as their middle colour)";
 const PLUGIN_SCRIPTS: &str = "plug-in frame scripts (not exported; they need the plug-in host)";
 const BUTTON_SOUNDS: &str = "sounds on button frames (not played yet)";
 const KEPT_SCRIPTS: &str = "kept frame scripts (not run; kept in the document only)";
@@ -294,6 +295,15 @@ impl<'a> Bake<'a> {
         };
         let v = match p {
             Paint::Solid(c) => json!({"s": color(*c)}),
+            // Canvas has a conic gradient but not a mirrored one, and an SVG-shaped paint
+            // server would not round-trip the phase faithfully; draw the middle colour and
+            // say so.
+            Paint::Reflected { stops, .. } | Paint::Angle { stops, .. } => {
+                self.notes.entry(REFLECTED_ANGLE_GRADIENTS).or_default().insert(el.id.0);
+                let mut sorted: Vec<_> = stops.iter().filter(|s| s.offset.is_finite()).copied().collect();
+                sorted.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+                json!({"s": color(sorted.get(sorted.len() / 2).map(|s| s.color).unwrap_or(Rgba::BLACK))})
+            }
             Paint::Linear { start, end, stops: s } => json!({"l": [coord(start.x), coord(start.y), coord(end.x), coord(end.y)], "st": stops(s)}),
             Paint::Radial { center, radius, stops: s } => json!({"r": [coord(center.x), coord(center.y), coord(radius.max(0.0))], "st": stops(s)}),
             Paint::Bitmap { bitmap, repeat, matrix: m } => match self.doc.bitmap(*bitmap) {

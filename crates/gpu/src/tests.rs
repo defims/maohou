@@ -753,7 +753,7 @@ fn filters_to_test() -> Vec<(&'static str, anicraft_doc::Filter)> {
     use anicraft_doc::{Filter as F, FilterSide as S};
     let ramp = stops(&[(0.0, Rgba::new(1.0, 1.0, 1.0, 0.0)), (0.4, Rgba::new(0.0, 1.0, 0.3, 0.8)), (1.0, Rgba::new(0.1, 0.0, 1.0, 1.0))]);
     let bevel_ramp = stops(&[(0.0, Rgba::new(1.0, 1.0, 0.8, 1.0)), (0.5, Rgba::new(0.0, 0.0, 0.0, 0.0)), (1.0, Rgba::new(0.2, 0.0, 0.3, 1.0))]);
-    let shadow = |inner, knockout, hide_object| F::DropShadow { blur_x: 5.0, blur_y: 8.0, strength: 1.3, quality: 2, angle: 35.0, distance: 6.0, color: Rgba::new(0.1, 0.0, 0.2, 0.8), inner, knockout, hide_object };
+    let shadow = |inner, knockout, hide_object| F::DropShadow { blur_x: 5.0, blur_y: 8.0, strength: 1.3, quality: 2, angle: 35.0, distance: 6.0, color: Rgba::new(0.1, 0.0, 0.2, 0.8), inner, knockout, hide_object , expansion: 0.0, noise: 0.0, threshold: false };
     let bevel = |side, knockout| F::Bevel { blur_x: 4.0, blur_y: 4.0, strength: 1.5, quality: 1, angle: 45.0, distance: 3.0, shadow_color: Rgba::new(0.0, 0.0, 0.0, 0.9), highlight_color: Rgba::WHITE, side, knockout };
     vec![
         ("blur", F::Blur { blur_x: 7.0, blur_y: 4.0, quality: 3 }),
@@ -808,7 +808,7 @@ fn gpu_matches_the_oracle_on_filtered_symbols_in_context() {
     let Some(g) = gpu() else { return };
     use anicraft_doc::Filter as F;
     let blur = F::Blur { blur_x: 4.0, blur_y: 4.0, quality: 2 };
-    let shadow = F::DropShadow { blur_x: 4.0, blur_y: 4.0, strength: 1.0, quality: 1, angle: 45.0, distance: 5.0, color: Rgba::BLACK, inner: false, knockout: false, hide_object: false };
+    let shadow = F::DropShadow { blur_x: 4.0, blur_y: 4.0, strength: 1.0, quality: 1, angle: 45.0, distance: 5.0, color: Rgba::BLACK, inner: false, knockout: false, hide_object: false , expansion: 0.0, noise: 0.0, threshold: false };
     let glow = F::Glow { blur_x: 6.0, blur_y: 6.0, strength: 1.5, quality: 1, color: Rgba::new(1.0, 0.9, 0.0, 1.0), inner: false, knockout: false };
     let white = Some(Rgba::WHITE);
     let bg = item(Path::rect(0.0, 0.0, 80.0, 64.0), Paint::Solid(Rgba::new(0.3, 0.6, 0.4, 1.0)));
@@ -865,7 +865,7 @@ fn filtered_sample() -> anicraft_doc::Document {
             for e in &mut Arc::make_mut(k).elements {
                 if let ElementKind::Symbol { filters, .. } = &mut Arc::make_mut(e).kind {
                     *filters = match i {
-                        0 => vec![F::DropShadow { blur_x: 8.0, blur_y: 8.0, strength: 0.8, quality: 2, angle: 45.0, distance: 10.0, color: Rgba::BLACK, inner: false, knockout: false, hide_object: false }, F::Bevel { blur_x: 5.0, blur_y: 5.0, strength: 1.0, quality: 1, angle: 45.0, distance: 4.0, shadow_color: Rgba::BLACK, highlight_color: Rgba::WHITE, side: anicraft_doc::FilterSide::Inner, knockout: false }],
+                        0 => vec![F::DropShadow { blur_x: 8.0, blur_y: 8.0, strength: 0.8, quality: 2, angle: 45.0, distance: 10.0, color: Rgba::BLACK, inner: false, knockout: false, hide_object: false , expansion: 0.0, noise: 0.0, threshold: false }, F::Bevel { blur_x: 5.0, blur_y: 5.0, strength: 1.0, quality: 1, angle: 45.0, distance: 4.0, shadow_color: Rgba::BLACK, highlight_color: Rgba::WHITE, side: anicraft_doc::FilterSide::Inner, knockout: false }],
                         _ => vec![F::Glow { blur_x: 12.0, blur_y: 12.0, strength: 1.4, quality: 2, color: Rgba::new(1.0, 0.85, 0.2, 1.0), inner: false, knockout: false }],
                     };
                 }
