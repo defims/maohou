@@ -74,9 +74,20 @@ pub(crate) fn read_skeleton(b: &mut Builder, skeleton: Option<&Value>) -> Option
         bone.min_constraint = -(json::num(get(raw, "max_constraint")).unwrap_or(0.0)) as f32;
         bone.max_constraint = -(json::num(get(raw, "min_constraint")).unwrap_or(0.0)) as f32;
         bone.offset = json::vec2(get(raw, "offset")).map_or(Vec2::ZERO, |p| Vec2::new(p.x * b.dpi, -p.y * b.dpi));
+        // A root bone's base is a document POINT (canvas-centre origin included) — the
+        // full inch→pixel transform, like the camera track. A CHILD bone's base is a
+        // delta in its parent's frame: distances scale and flip, no point mapping. (The
+        // dial gate caught the difference: a child mapped as a point orbits at a fixed
+        // canvas offset instead of riding the parent's axis.)
+        let is_root = bone.parent.is_none();
         anim::read_channel(&mut bone.pos, raw, "anim_pos", &mut b.report, 2, |ch, i| {
             let (x, y, _z) = channel::sample_vec3_at(ch, i).unwrap_or((0.0, 0.0, 0.0));
-            to_px.apply(Vec2::new(x as f32, y as f32))
+            let p = Vec2::new(x as f32, y as f32);
+            if is_root {
+                to_px.apply(p)
+            } else {
+                Vec2::new(p.x * b.dpi, -p.y * b.dpi)
+            }
         });
         anim::read_channel(&mut bone.angle, raw, "anim_angle", &mut b.report, 1, |ch, i| -(channel::sample_f64_at(ch, i).unwrap_or(0.0)) as f32);
         anim::read_channel(&mut bone.scale, raw, "anim_scale", &mut b.report, 1, |ch, i| channel::sample_f64_at(ch, i).unwrap_or(1.0) as f32);
@@ -114,8 +125,8 @@ pub(crate) fn read_skeleton(b: &mut Builder, skeleton: Option<&Value>) -> Option
     Some(Arc::new(out))
 }
 
-/// The smart-bone actions of one bone channel: each entry of the channel's `actions[]`
-/// carries a pose sub-channel, converted with `value` like the parent channel's keys.
+/// The smart-bone actions of one bone channel: the channel object's `actions[]` entries
+/// each carry a pose sub-channel, converted with `value` like the parent channel's keys.
 fn actions<T: ChannelValue>(
     raw: &Value,
     name: &str,
@@ -124,11 +135,8 @@ fn actions<T: ChannelValue>(
     value: impl FnMut(&Channel, usize) -> T + Copy,
 ) -> Vec<BoneAction<T>> {
     let mut out = Vec::new();
-    for a in array(get(raw, name))
-        .unwrap_or(&[])
-        .iter()
-        .flat_map(|ch| array(get(ch, "actions")).unwrap_or(&[]))
-    {
+    let channel = get(raw, name);
+    for a in array(channel.and_then(|ch| get(ch, "actions"))).unwrap_or(&[]) {
         let Some(label) = json::string(get(a, "name")) else { continue };
         let mut pose = DocChannel::<T>::default();
         if let Some(p) = get(a, "pose") {

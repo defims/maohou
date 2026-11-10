@@ -23,11 +23,12 @@
 //! arithmetic stops being a rotation) — the FK pose stands.
 //!
 //! Smart-bone actions (`actions[]` inside a bone channel, ADR 0104) are matched by name
-//! across the skeleton: the pose whose values run along an *angle* channel is the driver —
-//! its values are the dial angles each pose frame answers to — and every channel carrying
-//! an action of the same name blends its pose in, linearly, at the frame the driver value
-//! maps to. Moho's exact dial semantics are not public; this model is the documented
-//! reading, the sidecar keeps the original, and the corpus gates calibrate it.
+//! across the skeleton, and the one riding a dial bone.s *angle* channel with invertible
+//! pose values is the DRIVER: its values are the dial angles each action frame answers to
+//! (a lookup — the corpus serialization, CharWalk, stores it on the dial bone itself), and
+//! every channel carrying an action of the same name blends its pose in, linearly, at the
+//! frame the dial value inverts to. Measured from the bones-dial fixture (Moho 14.4,
+//! gen_dial.lua); the sidecar keeps the original.
 
 use crate::channel::{Channel, ChannelValue};
 use anicraft_geom::{Affine, Vec2};
@@ -268,16 +269,21 @@ impl Skeleton {
         out
     }
 
-    /// The driver mapping per action name: the first action of that name carried on an
-    /// *angle* channel (its pose values are the dial angles each pose frame answers to),
-    /// with the index of the bone that owns it.
-    fn drivers(&self) -> Vec<Driver<'_>> {
+    /// The driver lookups: a smart-bone action named N drives the rig when it rides on an
+    /// ANGLE channel whose pose values are invertible (the dial-angle lookup, ADR 0104) —
+    /// the corpus serialization (CharWalk, bones-dial) stores it on the dial bone itself.
+    fn drivers(&self) -> Vec<Driver> {
         let mut out: Vec<Driver> = Vec::new();
         for (i, b) in self.bones.iter().enumerate() {
             for a in &b.angle.actions {
-                if !out.iter().any(|d| d.name == a.name) {
-                    out.push(Driver { name: a.name.clone(), action: a, bone: i });
+                if out.iter().any(|d| d.name == a.name) {
+                    continue;
                 }
+                let (Some(first), Some(last)) = (a.pose.keys.first(), a.pose.keys.last()) else { continue };
+                if (last.val - first.val).abs() < 1e-9 {
+                    continue;
+                }
+                out.push(Driver { name: a.name.clone(), action: a, bone: i });
             }
         }
         out
@@ -441,12 +447,21 @@ impl Skeleton {
     }
 }
 
-/// A driver mapping found on an angle channel: the action and the bone that owns it.
+/// Records an action name's pose-frame span (first occurrence wins).
+fn note_pose_span<T: ChannelValue>(named: &mut Vec<(String, f32, f32)>, name: &str, pose: &Channel<T>) {
+    if named.iter().any(|(n, _, _)| n == name) {
+        return;
+    }
+    let (Some(first), Some(last)) = (pose.keys.first(), pose.keys.last()) else { return };
+    named.push((name.to_string(), first.frame as f32, last.frame as f32));
+}
+
+/// A driver lookup: the action and the dial bone that owns it. The pose values are the
+/// dial angles each action frame answers to, inverted by [`Action::pose_frame`].
 struct Driver<'a> {
     name: String,
     action: &'a Action<f32>,
-    bone: usize,
-}
+    bone: usize,}
 
 /// One bone's local matrix from its pose: position (offset included), angle, uniform
 /// scale, flips. Identity when everything sits at rest.
@@ -472,9 +487,9 @@ fn finite_or(v: f32, d: f32) -> f32 {
     }
 }
 
-/// Blends the smart-bone actions on `ch` over the base value: each action of a driven name
-/// weighs by the driver bone's base angle at this frame, samples its pose at the mapped
-/// pose frame, and the poses average; the average then blends over the base linearly.
+/// Blends the smart-bone actions on `ch` over the base value: each action weighs by its
+/// dial bone's base angle at this frame, samples its pose at the frame the dial maps to,
+/// and the poses average; the average then blends over the base linearly.
 fn blend_channel<T: ChannelValue>(ch: &Channel<T>, drivers: &[Driver], bones: &[Bone], f: f32, base: T) -> Option<T> {
     if ch.actions.is_empty() {
         return None;
@@ -483,12 +498,12 @@ fn blend_channel<T: ChannelValue>(ch: &Channel<T>, drivers: &[Driver], bones: &[
     let mut wsum = 0.0_f32;
     for a in &ch.actions {
         let Some(d) = drivers.iter().find(|d| d.name == a.name) else { continue };
-        let driver_angle = bones.get(d.bone)?.angle.sample_or(f, 0.0);
-        let w = d.action.weight(driver_angle);
+        let dial = bones.get(d.bone)?.angle.sample_or(f, 0.0);
+        let w = d.action.weight(dial);
         if w <= 0.0 {
             continue;
         }
-        let Some(pf) = d.action.pose_frame(driver_angle) else { continue };
+        let Some(pf) = d.action.pose_frame(dial) else { continue };
         let Some(v) = a.pose.sample(pf) else { continue };
         acc = match acc {
             None => Some((v, w)),
@@ -746,36 +761,48 @@ mod tests {
 
     #[test]
     fn actions_blend_by_the_driver_angle() {
-        // A dial (root, angle channel carrying the action) and a follower whose angle pose
-        // is named the same: turning the dial to 90° drives the follower's pose key at
-        // frame 12 (its angle 90°).
+        // The corpus serialization (CharWalk, bones-dial): the LOOKUP rides on the dial
+        // bone's own angle channel — its pose values are the dial angles each action frame
+        // answers to — while the posed bone's channel carries its own pose. The dial keys
+        // −90°→+90° over frames 0..24 (screen-stored), the lookup mirrors it, and the
+        // follower's pose answers 0..45° (screen) over the same frames.
         let quarter = std::f32::consts::FRAC_PI_2;
         let mut dial = bone("dial", None, 40.0);
         let mut dial_angle = Channel::default();
-        let mut dial_pose = Channel::default();
-        dial_pose.set_key(0, 0.0);
-        dial_pose.set_key(24, quarter);
-        dial_angle.actions.push(Action { name: "bend".into(), pose: dial_pose });
-        dial_angle.set_key(0, 0.0);
-        dial_angle.set_key(24, quarter);
+        let mut lookup = Channel::default();
+        lookup.set_key(0, quarter);
+        lookup.set_key(24, -quarter);
+        dial_angle.actions.push(Action { name: "dial".into(), pose: lookup });
+        dial_angle.set_key(0, quarter);
+        dial_angle.set_key(24, -quarter);
         dial.angle = dial_angle;
         let mut follower = bone("f", Some(BoneId(0)), 30.0);
+        follower.pos.set_key(0, Vec2::new(40.0, 0.0));
         let mut f_angle = Channel::default();
         let mut f_pose = Channel::default();
         f_pose.set_key(0, 0.0);
-        f_pose.set_key(12, quarter);
-        f_angle.actions.push(Action { name: "bend".into(), pose: f_pose });
+        f_pose.set_key(24, -quarter / 2.0);
+        f_angle.actions.push(Action { name: "dial".into(), pose: f_pose });
         follower.angle = f_angle;
         let sk = Skeleton { bones: vec![dial, follower], ..Skeleton::default() };
-        // Dial at rest: no blend; the follower hangs at the dial's base pointing +x.
+        // Dial at its start (frame 0, +90°): pose frame 0 — the follower pose is 0.
         let m0 = sk.matrices(0);
         let t0 = m0[1].apply(Vec2::new(30.0, 0.0));
-        assert!((t0.x - 30.0).abs() < 1e-3 && t0.y.abs() < 1e-3, "follower straight at rest: {t0:?}");
-        // Dial turned 90° (frame 24): pose frame 12 on the follower's pose (its 90° key):
-        // the follower (still at the dial's base) now points back along −x.
+        assert!(t0.x.abs() < 1e-3 && (t0.y - 70.0).abs() < 1e-3, "follower at the dial pose 0: {t0:?}");
+        // Dial mid-range (frame 12, angle 0): pose frame 12 — the follower pose is −22.5°,
+        // a quarter turn off the dial's (now horizontal) direction.
+        let m12 = sk.matrices(12);
+        let t12 = m12[1].apply(Vec2::new(30.0, 0.0));
+        // Follower joint at (40, 0); its 30 px tip turned −22.5°.
+        let want = Vec2::new(40.0 + 30.0 * (quarter / 4.0).cos(), 30.0 * -(quarter / 4.0).sin());
+        assert!((t12 - want).length() < 1e-2, "follower at dial mid: {t12:?} vs {want:?}");
+        // Dial at its end (frame 24, −90°): pose frame 24 — the follower pose is −45°,
+        // and the whole chain rides the dial's quarter turn (tip numerically:
+        // R(−90°)·[(40,0) + 30·u(−45°)] = (−21.213, −61.213)).
         let m24 = sk.matrices(24);
         let t24 = m24[1].apply(Vec2::new(30.0, 0.0));
-        assert!((t24.x + 30.0).abs() < 1e-3 && t24.y.abs() < 1e-3, "follower bent: {t24:?}");
+        let want = Vec2::new(-21.213, -61.213);
+        assert!((t24 - want).length() < 1e-2, "follower at dial end: {t24:?} vs {want:?}");
     }
 
     #[test]
