@@ -98,7 +98,7 @@ fn copy_frames(s: &mut Session, p: &Value) -> Result<Value> {
     let symbols = collect_symbols(s, &elements);
     let n = clip.layers.len();
     let mut sounds: Vec<Arc<anicraft_doc::Sound>> = Vec::new();
-    for id in clip.layers.iter().flat_map(|l| l.keys.iter().filter_map(|k| k.sound.map(|f| f.sound))) {
+    for id in clip.layers.iter().flat_map(|l| l.keys.iter().filter_map(|k| k.sound.as_ref().map(|f| f.sound))) {
         if let Some(x) = s.doc.sounds.iter().find(|x| x.id == id) && !sounds.iter().any(|y| y.id == id) {
             sounds.push(x.clone());
         }
@@ -162,6 +162,7 @@ fn paste_frames(s: &mut Session, p: &Value) -> Result<Value> {
             keys.push(Arc::new(k));
         }
         let Some(layer) = s.doc.timeline_mut(s.scene).layers.get_mut(row).map(Arc::make_mut) else { continue };
+        crate::cmds_camera::keys_fit(layer.kind, keys.iter().map(|k| &**k))?;
         if layer.keyframe_index_at(frame).is_some() {
             insert_keyframe_at(layer, frame, true)?;
         }

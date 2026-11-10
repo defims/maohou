@@ -16,7 +16,11 @@ const DOC: &str = r##"<DOMDocument xmlns="http://ns.adobe.com/xfl/2008/" width="
                 <DOMSymbolInstance libraryItemName="Characters/Ball" loop="play once" firstFrame="2" blendMode="hardlight">
                   <matrix><Matrix a="2" d="2" tx="100" ty="50"/></matrix>
                   <color><Color alphaMultiplier="0.5"/></color>
-                  <filters><DropShadowFilter distance="8" color="#333333" alpha="0.5"/><BlurFilter blurX="10" blurY="10" quality="2"/><BevelFilter/><GlowFilter enabled="false"/></filters>
+                  <filters><DropShadowFilter distance="8" color="#333333" alpha="0.5"/><BlurFilter blurX="10" blurY="10" quality="2"/><GlowFilter enabled="false"/>
+                    <BevelFilter blurX="4" blurY="6" distance="3" angle="135" highlightColor="#FFFF00" highlightAlpha="0.75" shadowAlpha="0.5" type="full" knockout="true"/>
+                    <GradientGlowFilter strength="2" type="inner"><GradientEntry color="#FFFFFF" alpha="0.5" ratio="0"/><GradientEntry color="#FF0000" ratio="1"/><GradientEntry color="#00FF00" ratio="128"/><GradientEntry color="#0000FF" ratio="255"/></GradientGlowFilter>
+                    <GradientBevelFilter quality="3"><GradientEntry color="#FFFFFF" ratio="0"/><GradientEntry color="#000000" ratio="1"/></GradientBevelFilter>
+                    <SparkleFilter/></filters>
                 </DOMSymbolInstance>
               </elements>
             </DOMFrame>
@@ -93,8 +97,15 @@ fn stage_layers_frames_and_tweens() {
     assert!(report.skipped.keys().all(|k| !k.contains("text")), "an empty text field makes nothing and reports nothing");
     assert_eq!(report.skipped.get("instances of missing bitmaps"), Some(&1));
     assert_eq!(report.skipped.get("missing library files"), Some(&1));
-    // Frame scripts, on the scene's frames and inside symbols, are counted (ADR 0013).
-    assert_eq!(report.skipped.get("frame scripts (ActionScript isn't supported yet)"), Some(&2));
+    assert_eq!(report.skipped.get("unknown filters"), Some(&1));
+    // Frame scripts, on the scene's frames and inside symbols, are kept verbatim, not run
+    // (ADR 0013 tier 1).
+    assert_eq!(report.kept.get("frame scripts in ActionScript 3.0"), Some(&2));
+    assert!(report.skipped.keys().all(|k| !k.contains("script")), "{report:?}");
+    assert_eq!(ball.keyframes[1].script.as_ref().and_then(|s| s.source()).map(|s| s.text.as_str()), Some("stop();"));
+    let inner = &doc.library[0].timeline.layers[0].keyframes[0];
+    assert!(matches!(inner.script.as_ref().and_then(|s| s.source()), Some(s) if s.text == "gotoAndPlay(2);" && s.language == anicraft_doc::Language::ActionScript3));
+    assert!(report.summary().contains("Kept, not run: 2 frame scripts in ActionScript 3.0."), "{}", report.summary());
     // Every scene comes across, in order.
     assert_eq!(doc.scenes.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Scene 1", "Scene 2"]);
     assert_eq!(doc.timeline(1).layers.len(), 1, "an empty scene gets a layer to draw on");
@@ -136,11 +147,23 @@ fn symbols_instances_and_the_tween_between_them() {
     let sym = &doc.library[0];
     assert_eq!((sym.name.as_str(), sym.kind), ("Ball", SymbolKind::MovieClip));
     let inst = &doc.timeline(0).layers[0].keyframes[0].elements[0];
-    let ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters } = &inst.kind else { panic!("an instance") };
+    let ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, .. } = &inst.kind else { panic!("an instance") };
     assert_eq!(*blend, anicraft_doc::BlendMode::HardLight, "Animate's blend mode names");
-    assert_eq!(filters.len(), 2, "{filters:?}");
+    assert_eq!(filters.len(), 5, "{filters:?}");
     assert!(matches!(filters[0], anicraft_doc::Filter::DropShadow { distance, inner: false, .. } if distance == 8.0));
     assert!(matches!(filters[1], anicraft_doc::Filter::Blur { blur_x, quality: 2, .. } if blur_x == 10.0));
+    use anicraft_doc::{Filter, FilterSide};
+    let Filter::Bevel { blur_x, blur_y, distance, angle, highlight_color, shadow_color, side, knockout, strength, .. } = filters[2] else { panic!("{:?}", filters[2]) };
+    assert_eq!((blur_x, blur_y, distance, angle, side, knockout, strength), (4.0, 6.0, 3.0, 135.0, FilterSide::Full, true, 1.0));
+    assert_eq!((highlight_color, shadow_color), (Rgba::hex(0xffff00).with_alpha(0.75), Rgba::BLACK.with_alpha(0.5)));
+    // Ramps: ratios 0..1 or 0..255; the glow's start pinned transparent, the bevel given a
+    // transparent middle (as Animate's panel keeps them).
+    let Filter::GradientGlow { stops, side: FilterSide::Inner, strength, .. } = &filters[3] else { panic!("{:?}", filters[3]) };
+    assert_eq!(*strength, 2.0);
+    assert_eq!(stops.iter().map(|s| (s.offset, s.color.a)).collect::<Vec<_>>(), vec![(0.0, 0.0), (1.0 / 255.0, 1.0), (128.0 / 255.0, 1.0), (1.0, 1.0)], "one byte scale for every ratio");
+    let Filter::GradientBevel { stops, side: FilterSide::Inner, quality: 3, .. } = &filters[4] else { panic!("{:?}", filters[4]) };
+    assert_eq!(stops.len(), 3);
+    assert_eq!((stops[1].offset, stops[1].color.a), (0.5, 0.0));
     assert_eq!((*symbol, *loop_mode, *first_frame), (sym.id, LoopMode::PlayOnce, 2));
     assert_eq!(inst.transform.m, [2.0, 0.0, 0.0, 2.0, 100.0, 50.0]);
     assert_eq!(inst.color.alpha, 0.5);
@@ -175,6 +198,9 @@ fn a_fla_archive_imports_the_same() {
     let (doc, _) = crate::import_path(&fla).unwrap();
     assert_eq!(doc.timeline(0).layers.len(), 4);
     assert_eq!(doc.library.len(), 1);
+    let (from_bytes, _) = crate::import_fla(&z).unwrap();
+    assert_eq!((from_bytes.timeline(0).layers.len(), from_bytes.library.len()), (4, 1), "the bytes a browser hands over import the same");
+    assert!(crate::import_fla(b"not a zip").is_err());
     std::fs::remove_file(&fla).ok();
     std::fs::remove_dir(&dir).ok();
 }
@@ -337,4 +363,75 @@ fn odd_shape_hints_are_reported_not_fatal() {
     let (d, report) = import(&HashMap::from([("DOMDocument.xml", doc)])).unwrap();
     assert!(d.timeline(0).layers[0].keyframes[0].hints.is_empty());
     assert!(report.skipped.contains_key("shape hints missing on the end keyframe"));
+}
+
+#[test]
+fn eases_names_and_loop_modes_the_corpus_found_missing() {
+    let frame = |attrs: &str, inner: &str| format!(r#"<DOMFrame index="0" duration="4" tweenType="motion" {attrs}>{inner}<elements><DOMSymbolInstance libraryItemName="Clip" name="my clip" loop="loop reverse"/></elements></DOMFrame><DOMFrame index="4"><elements/></DOMFrame>"#);
+    let pts = |p: &[(f32, f32)]| p.iter().map(|(x, y)| format!(r#"<Point x="{x}" y="{y}"/>"#)).collect::<String>();
+    let layers = [
+        // Seven points: a curve of two segments, drawn with the slider's ease.
+        frame(r#"hasCustomEase="true" acceleration="30""#, &format!(r#"<tweens><CustomEase target="all">{}</CustomEase></tweens>"#, pts(&[(0.0, 0.0), (0.2, 0.0), (0.3, 0.5), (0.5, 0.5), (0.7, 0.5), (0.8, 1.0), (1.0, 1.0)]))),
+        // One curve per property: also the slider's.
+        frame(r#"hasCustomEase="true" useSingleEaseCurve="false""#, &format!(r#"<tweens><CustomEase target="position">{0}</CustomEase><CustomEase target="rotation">{0}</CustomEase></tweens>"#, pts(&[(0.0, 0.0), (0.5, 0.0), (0.5, 1.0), (1.0, 1.0)]))),
+        // Said to have a custom ease, with none there.
+        frame(r#"hasCustomEase="true""#, ""),
+    ];
+    let layers: String = layers.iter().map(|f| format!(r#"<DOMLayer name="L"><frames>{f}</frames></DOMLayer>"#)).collect();
+    let doc = format!(r#"<DOMDocument><symbols><Include href="Clip.xml"/></symbols><timelines><DOMTimeline name="Scene 1"><layers>{layers}</layers></DOMTimeline></timelines></DOMDocument>"#);
+    let doc: &'static str = Box::leak(doc.into_boxed_str());
+    let clip = r#"<DOMSymbolItem name="Clip"><timeline><DOMTimeline name="Clip"/></timeline></DOMSymbolItem>"#;
+    let (d, report) = import(&HashMap::from([("DOMDocument.xml", doc), ("LIBRARY/Clip.xml", clip)])).unwrap();
+    let eases: Vec<anicraft_doc::Easing> = d.timeline(0).layers.iter().map(|l| l.keyframes[0].tween.unwrap().easing).collect();
+    assert_eq!(eases, [anicraft_doc::Easing::Classic(30.0), anicraft_doc::Easing::Linear, anicraft_doc::Easing::Linear]);
+    assert_eq!(report.skipped.get("custom ease curves (drawn with the simple ease)"), Some(&3));
+    assert_eq!(d.library[0].kind, SymbolKind::MovieClip, "no symbolType: a movie clip");
+    let ElementKind::Symbol { loop_mode, .. } = &d.timeline(0).layers[0].keyframes[0].elements[0].kind else { panic!() };
+    assert_eq!(*loop_mode, LoopMode::Loop, "loop reverse plays forward");
+    assert_eq!(report.skipped.get("reverse loop modes (played forward)"), Some(&3));
+    assert_eq!(d.timeline(0).layers[0].keyframes[0].elements[0].name, "", "not an identifier: left out");
+    assert_eq!(report.skipped.get("instance names actions can't use (left out)"), Some(&3));
+}
+
+#[test]
+fn scripts_linkage_and_the_document_class_are_kept_not_run() {
+    // ADR 0013 tier 1: frame scripts verbatim, linkage classes and the document class as text.
+    let doc = r#"<DOMDocument><symbols><Include href="Hero.xml"/><Include href="Old.xml"/><Include href="Bad.xml"/><Include href="Off.xml"/></symbols>
+      <media><DOMBitmapItem name="pic.png" linkageExportForAS="true" linkageClassName="Pic"/></media>
+      <timelines><DOMTimeline name="Scene 1"><layers><DOMLayer name="as"><frames>
+        <DOMFrame index="0"><Actionscript><script><![CDATA[var n:int = 1 < 2 ? 1 : 0; // <tags> & "quotes"
+trace(n);]]></script></Actionscript><elements><DOMSymbolInstance libraryItemName="Hero"><Actionscript><script><![CDATA[on (release) { play(); }]]></script></Actionscript></DOMSymbolInstance></elements></DOMFrame>
+        <DOMFrame index="1"><Actionscript><script><![CDATA[   ]]></script></Actionscript><elements/></DOMFrame>
+      </frames></DOMLayer></layers></DOMTimeline></timelines></DOMDocument>"#;
+    let sym = |name: &str, attrs: &str| format!(r#"<DOMSymbolItem name="{name}" {attrs}><timeline><DOMTimeline name="{name}"/></timeline></DOMSymbolItem>"#);
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let settings = r#"<flash_profiles><flash_profile name="Old" current="false"><PublishFlashProperties><ActionScriptVersion>3</ActionScriptVersion><DocumentClass>Nope</DocumentClass></PublishFlashProperties></flash_profile>
+      <flash_profile name="Default" current="true"><PublishFlashProperties><ActionScriptVersion>2</ActionScriptVersion><DocumentClass> com.example.Main </DocumentClass></PublishFlashProperties></flash_profile></flash_profiles>"#;
+    let files = HashMap::from([
+        ("DOMDocument.xml", doc),
+        ("PublishSettings.xml", settings),
+        ("LIBRARY/Hero.xml", leak(sym("Hero", r#"linkageExportForAS="true" linkageClassName="com.example.Hero" linkageBaseClass="flash.display.MovieClip""#))),
+        ("LIBRARY/Old.xml", leak(sym("Old", r#"linkageExportForAS="true" linkageIdentifier="oldClip""#))),
+        ("LIBRARY/Bad.xml", leak(sym("Bad", r#"linkageExportForAS="true" linkageClassName="not a class""#))),
+        ("LIBRARY/Off.xml", leak(sym("Off", r#"linkageExportForAS="false" linkageClassName="Off""#))),
+    ]);
+    let (d, report) = import(&files).unwrap();
+    let s = d.timeline(0).layers[0].keyframes[0].script.as_ref().and_then(|s| s.source()).unwrap();
+    assert_eq!(s.text, "var n:int = 1 < 2 ? 1 : 0; // <tags> & \"quotes\"\ntrace(n);", "verbatim");
+    assert_eq!(s.language, anicraft_doc::Language::ActionScript1or2, "the current publish profile says ActionScript 2");
+    assert!(d.timeline(0).layers[0].keyframes[1].script.is_none(), "a blank script is nothing");
+    assert_eq!(d.document_class, "com.example.Main");
+    let linkage: Vec<Option<(&str, &str)>> = d.library.iter().map(|s| s.linkage.as_ref().map(|l| (l.class.as_str(), l.base.as_str()))).collect();
+    assert_eq!(linkage, [Some(("com.example.Hero", "flash.display.MovieClip")), Some(("oldClip", "")), None, None]);
+    let kept: Vec<(&str, usize)> = report.kept.iter().map(|(k, n)| (k.as_str(), *n)).collect();
+    assert_eq!(kept, [("document class", 1), ("frame scripts in ActionScript 1.0 & 2.0", 1), ("linkage classes", 2)]);
+    assert_eq!(report.skipped.get("linkage classes that aren't class names (left out)"), Some(&1));
+    assert_eq!(report.skipped.get("linkage classes on bitmaps and sounds (left out)"), Some(&1));
+    assert_eq!(report.skipped.get("scripts on instances (left out; frame scripts are kept)"), Some(&1));
+    // Broken or missing publish settings change nothing.
+    let mut files = files;
+    files.insert("PublishSettings.xml", "<flash_profiles><unclosed>");
+    let (d, report) = import(&files).unwrap();
+    assert!(d.document_class.is_empty() && !report.kept.contains_key("document class"));
+    assert!(report.kept.contains_key("frame scripts in ActionScript 3.0"));
 }

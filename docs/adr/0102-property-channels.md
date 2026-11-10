@@ -1,8 +1,10 @@
-# ADR 0025: Property channels — layer transforms, camera, scene range
+# ADR 0102: Property channels — layer transforms, camera, scene range
 
 * Status: accepted (2026-11-10)
-* Relates to: ADR 0003 (file format v5), ADR 0024 (Moho import), ADR 0016 (motion tweens —
-  the other property-curve model), the Moho parity plan (fork plan › stage 2)
+* Relates to: ADR 0003 (file format v5), ADR 0101 (Moho import), ADR 0016 (motion tweens —
+  the other property-curve model), ADR 0027 (the camera layer — the Animate-style camera this
+  composes with: the imported Moho camera rides beside it as scene data), the Moho parity plan
+  (fork plan › stage 2)
 
 ## Context
 

@@ -7,15 +7,20 @@
 //! primitives; symbol instances with their matrix, alpha and tint, loop mode and first frame;
 //! library symbols (graphic, movie clip, button) with their own timelines, nested to any
 //! depth; bitmaps (library items, instances and bitmap fills) whose image is stored as PNG or
-//! JPEG in the package; text fields, laid out with this computer's fonts (`text`, ADR 0014).
-//! Everything else (sound, motion tweens with property curves, bevel and gradient filters,
-//! bitmaps kept only in Animate's own storage) is counted in the report instead of guessed at.
+//! JPEG in the package; text fields, laid out with this computer's fonts (`text`, ADR 0014);
+//! frame scripts, symbol linkage classes and the document class, kept verbatim and not run
+//! (ADR 0013 tier 1; the report lists them as kept).
+//! Everything else (sound, motion tweens with property curves, unknown filters,
+//! bitmaps kept only in Animate's own storage) is counted in the report instead of guessed at,
+//! and so is whatever is drawn the nearest way AniCraft can (square caps, reflecting
+//! gradients, advanced colour effects, …). The self-authored corpus in `tests/corpus/` covers
+//! every feature listed here, with golden renders (ADR 0035).
 
 use crate::edges::{self, Edge};
 use crate::xml::{self, Element as X};
 use anicraft_doc::{
-    Bitmap, BitmapId, BlendMode, ColorEffect, Filter, Document, Easing, Element, ElementId, ElementKind, GradientStop, Keyframe, Layer, LayerId, LayerKind, LoopMode, Paint, Rgba, Shape, Stage, Stroke, Symbol, SymbolId,
-    Scene, ShapeHint, SymbolKind, Timeline, Tween, TweenKind,
+    Bitmap, BitmapId, BlendMode, ColorEffect, Filter, FilterSide, Document, Easing, Element, ElementId, ElementKind, GradientStop, Keyframe, Layer, LayerId, LayerKind, LoopMode, Paint, Rgba, Shape, Stage, Stroke, Symbol, SymbolId,
+    Scene, ShapeHint, SymbolKind, Timeline, Tween, TweenKind, FrameScript, Language, Linkage, SourceScript,
 };
 use anicraft_geom::{Affine, FillRule, Path, Vec2};
 use anicraft_text::{FaceMatch, Fonts};
@@ -42,11 +47,14 @@ pub enum XflError {
     NotXfl(String),
 }
 
-/// What the import couldn't bring across, by kind ("3 bitmaps"), and the fonts it couldn't
-/// find.
+/// What the import couldn't bring across, by kind ("3 bitmaps"), what it kept without
+/// running (scripts), and the fonts it couldn't find.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Report {
     pub skipped: BTreeMap<String, usize>,
+    /// Kept in the document but not run, by kind ("2 frame scripts in ActionScript 3.0"; ADR
+    /// 0013 tier 1).
+    pub kept: BTreeMap<String, usize>,
     pub notes: Vec<String>,
     /// Font families the document's text asks for that aren't on this computer.
     pub missing_fonts: BTreeSet<String>,
@@ -58,13 +66,23 @@ impl Report {
     pub(crate) fn skip(&mut self, what: &str) {
         *self.skipped.entry(what.to_string()).or_default() += 1;
     }
-    /// One line for a status bar: "Imported. Not yet supported: 2 sounds. Fonts not on this
-    /// computer, drawn in Inter: Futura, Gotham."
+    pub(crate) fn keep(&mut self, what: &str) {
+        *self.kept.entry(what.to_string()).or_default() += 1;
+    }
+    /// One line for a status bar: "Imported. Kept, not run: 3 frame scripts in ActionScript
+    /// 3.0. Not yet supported: 2 sounds. Fonts not on this computer, drawn in Inter: Futura,
+    /// Gotham."
     pub fn summary(&self) -> String {
+        let kept = if self.kept.is_empty() {
+            String::new()
+        } else {
+            let parts: Vec<String> = self.kept.iter().map(|(k, n)| format!("{n} {k}")).collect();
+            format!(" Kept, not run: {}.", parts.join(", "))
+        };
         if self.skipped.is_empty() && self.notes.is_empty() && self.missing_fonts.is_empty() {
-            return "Imported everything in the file.".into();
+            return format!("Imported everything in the file.{kept}");
         }
-        let mut out = String::from("Imported.");
+        let mut out = format!("Imported.{kept}");
         let mut parts: Vec<String> = self.skipped.iter().map(|(k, n)| format!("{n} {k}")).collect();
         parts.extend(self.notes.iter().cloned());
         if !parts.is_empty() {
@@ -96,8 +114,10 @@ struct Builder<'a> {
     /// Library item name → symbol id (allocated before timelines are built, so instances can
     /// refer to any symbol).
     ids: HashMap<String, SymbolId>,
-    /// Parsed symbol files waiting to be built.
-    pending: Vec<(SymbolId, String, SymbolKind, X)>,
+    /// Parsed symbol files waiting to be built, with their script class.
+    pending: Vec<(SymbolId, String, SymbolKind, Option<Linkage>, X)>,
+    /// The language the document's frame scripts are written in (from its publish settings).
+    language: Language,
     /// Library item name → bitmap id, for the bitmaps that could be read.
     bitmaps: HashMap<String, BitmapId>,
     report: Report,
@@ -105,6 +125,28 @@ struct Builder<'a> {
     fonts: Option<&'a Fonts>,
     /// Face name → what it is on this computer, looked up once per name.
     faces: HashMap<String, FaceMatch>,
+}
+
+/// A bevel or gradient filter's `type`: `inner`, `outer` or `full` (`default` when missing).
+fn filter_side(el: &X, default: FilterSide) -> FilterSide {
+    match el.attr("type").map(str::trim) {
+        Some("inner") => FilterSide::Inner,
+        Some("outer") => FilterSide::Outer,
+        Some("full") => FilterSide::Full,
+        _ => default,
+    }
+}
+
+/// A gradient filter's ramp: its `GradientEntry` children (directly, or in a wrapper), with
+/// ratios 0..1 (or Flash's 0..255).
+fn ramp(el: &X) -> Vec<GradientStop> {
+    let entries = el.children.iter().flat_map(|c| if c.name == "GradientEntry" { std::slice::from_ref(c) } else { c.children.as_slice() }).filter(|g| g.name == "GradientEntry");
+    let raw: Vec<(f32, Rgba)> = entries.take(anicraft_doc::MAX_RAMP_STOPS).map(|g| (g.f32("ratio").filter(|r| r.is_finite()).unwrap_or(0.0), color(g, "color", "alpha"))).collect();
+    // One scale for the whole ramp: any ratio past 1 means bytes.
+    let scale = if raw.iter().any(|(r, _)| *r > 1.0) { 1.0 / 255.0 } else { 1.0 };
+    let mut stops: Vec<GradientStop> = raw.into_iter().map(|(r, c)| GradientStop { offset: (r * scale).clamp(0.0, 1.0), color: c }).collect();
+    stops.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+    stops
 }
 
 pub(crate) fn color(el: &X, key: &str, alpha_key: &str) -> Rgba {
@@ -131,6 +173,24 @@ fn paint(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut Report) -> O
             let stops: Vec<GradientStop> = def.children.iter().filter(|c| c.name == "GradientEntry").map(|g| GradientStop { offset: g.f32("ratio").unwrap_or(0.0).clamp(0.0, 1.0), color: color(g, "color", "alpha") }).collect();
             if stops.is_empty() {
                 return None;
+            }
+            // What AniCraft's gradients can't draw yet is drawn the nearest way, and said.
+            if def.attr("spreadMethod").is_some_and(|s| s.trim() != "pad") {
+                report.skip("repeating and reflecting gradients (drawn padded)");
+            }
+            if def.attr("interpolationMethod").is_some_and(|s| s.trim() == "linearRGB") {
+                report.skip("linear-RGB gradients (blended in sRGB)");
+            }
+            if def.name == "RadialGradient" {
+                if def.f32("focalPointRatio").is_some_and(|f| f != 0.0) {
+                    report.skip("radial gradient focal points (drawn centred)");
+                }
+                let (x, y) = (m.apply_vector(Vec2::new(1.0, 0.0)), m.apply_vector(Vec2::new(0.0, 1.0)));
+                let (lx, ly) = (x.length(), y.length());
+                // Columns of different lengths, or not at right angles: an ellipse.
+                if (lx - ly).abs() > 0.01 * lx.max(ly) || x.dot(y).abs() > 0.01 * lx * ly {
+                    report.skip("elliptical radial gradients (drawn round)");
+                }
             }
             Some(if def.name == "LinearGradient" {
                 Paint::Linear { start: m.apply(Vec2::new(-GRADIENT_HALF, 0.0)), end: m.apply(Vec2::new(GRADIENT_HALF, 0.0)), stops }
@@ -163,9 +223,21 @@ fn stroke(def: &X, bitmaps: &HashMap<String, BitmapId>, report: &mut Report) -> 
     if def.name != "SolidStroke" {
         report.skip("stroke styles drawn as solid");
     }
+    // AniCraft strokes have round caps and joins (the format's default).
+    let round = |k: &str| def.attr(k).is_none_or(|v| v.trim() == "round");
+    if !round("caps") || !round("joints") {
+        report.skip("stroke caps and joins other than round (drawn round)");
+    }
     let width = def.f32("weight").unwrap_or(1.0).clamp(0.05, 1000.0);
     let fill = def.child("fill").and_then(|f| f.children.first());
-    let c = fill.map_or(Rgba::BLACK, |f| if f.name == "SolidColor" { color(f, "color", "alpha") } else { paint(f, bitmaps, report).map_or(Rgba::BLACK, |p| p.primary_color()) });
+    let c = fill.map_or(Rgba::BLACK, |f| {
+        if f.name == "SolidColor" {
+            color(f, "color", "alpha")
+        } else {
+            report.skip("gradient and bitmap strokes (drawn in one colour)");
+            paint(f, bitmaps, report).map_or(Rgba::BLACK, |p| p.primary_color())
+        }
+    });
     Some(Stroke::new(c, width))
 }
 
@@ -190,14 +262,14 @@ impl<'a> Builder<'a> {
             let (Some(p), true) = (p, index > 0) else { continue };
             let path = edges::fill_path(&edges, index);
             if !path.is_empty() {
-                out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(p), stroke: None, fill_rule: FillRule::EvenOdd }), m, ColorEffect::default()));
+                out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(p), stroke: None, fill_rule: FillRule::EvenOdd, merge: false }), m, ColorEffect::default()));
             }
         }
         for (index, s) in strokes {
             let (Some(s), true) = (s, index > 0) else { continue };
             let path = edges::stroke_path(&edges, index);
             if !path.is_empty() {
-                out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: Some(s), fill_rule: FillRule::NonZero }), m, ColorEffect::default()));
+                out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: Some(s), fill_rule: FillRule::NonZero, merge: false }), m, ColorEffect::default()));
             }
         }
     }
@@ -214,7 +286,7 @@ impl<'a> Builder<'a> {
         let stroke = el.child("stroke").and_then(|s| s.children.first()).and_then(|d| stroke(d, &self.bitmaps, &mut self.report));
         if fill.is_some() || stroke.is_some() {
             let m = parent.mul(&matrix(el));
-            out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill, stroke, fill_rule: FillRule::NonZero }), m, ColorEffect::default()));
+            out.push(self.element(ElementKind::Shape(Shape { path: Arc::new(path), fill, stroke, fill_rule: FillRule::NonZero, merge: false }), m, ColorEffect::default()));
         }
     }
 
@@ -225,12 +297,12 @@ impl<'a> Builder<'a> {
             self.report.skip("instances of missing bitmaps");
             return;
         };
-        let shape = Shape { path: Arc::new(Path::rect(0.0, 0.0, w, h)), fill: Some(Paint::Bitmap { bitmap, repeat: false, matrix: Affine::IDENTITY }), stroke: None, fill_rule: FillRule::NonZero };
+        let shape = Shape { path: Arc::new(Path::rect(0.0, 0.0, w, h)), fill: Some(Paint::Bitmap { bitmap, repeat: false, matrix: Affine::IDENTITY }), stroke: None, fill_rule: FillRule::NonZero, merge: false };
         out.push(self.element(ElementKind::Shape(shape), parent.mul(&matrix(el)), ColorEffect::default()));
     }
 
-    /// An instance's filters, by Animate's element names. Bevel and gradient filters are
-    /// reported, and switched-off filters left out.
+    /// An instance's filters, by Animate's element names; switched-off filters are left out,
+    /// and unknown ones reported.
     fn filters(&mut self, el: &X) -> Vec<Filter> {
         let mut out = Vec::new();
         for f in el.list("filters") {
@@ -259,8 +331,30 @@ impl<'a> Builder<'a> {
                 },
                 "GlowFilter" => Filter::Glow { blur_x: num("blurX", 5.0), blur_y: num("blurY", 5.0), strength: num("strength", 1.0), quality, color: color(f, "color", "alpha"), inner: flag("inner"), knockout: flag("knockout") },
                 "AdjustColorFilter" => Filter::AdjustColor { brightness: num("brightness", 0.0), contrast: num("contrast", 0.0), saturation: num("saturation", 0.0), hue: num("hue", 0.0) },
+                "BevelFilter" => Filter::Bevel {
+                    blur_x: num("blurX", 5.0),
+                    blur_y: num("blurY", 5.0),
+                    strength: num("strength", 1.0),
+                    quality,
+                    angle: num("angle", 45.0),
+                    distance: num("distance", 5.0),
+                    shadow_color: color(f, "shadowColor", "shadowAlpha"),
+                    highlight_color: if f.attr("highlightColor").is_some() { color(f, "highlightColor", "highlightAlpha") } else { Rgba::WHITE.with_alpha(num("highlightAlpha", 1.0).clamp(0.0, 1.0)) },
+                    side: filter_side(f, FilterSide::Inner),
+                    knockout: flag("knockout"),
+                },
+                "GradientGlowFilter" | "GradientBevelFilter" => {
+                    let glow = f.name == "GradientGlowFilter";
+                    let (blur_x, blur_y, strength, angle, distance, knockout) = (num("blurX", 5.0), num("blurY", 5.0), num("strength", 1.0), num("angle", 45.0), num("distance", 5.0), flag("knockout"));
+                    let stops = ramp(f);
+                    if glow {
+                        Filter::GradientGlow { blur_x, blur_y, strength, quality, angle, distance, stops: if stops.is_empty() { anicraft_doc::default_glow_ramp() } else { stops }, side: filter_side(f, FilterSide::Outer), knockout }
+                    } else {
+                        Filter::GradientBevel { blur_x, blur_y, strength, quality, angle, distance, stops: if stops.is_empty() { anicraft_doc::default_bevel_ramp() } else { stops }, side: filter_side(f, FilterSide::Inner), knockout }
+                    }
+                }
                 _ => {
-                    self.report.skip("bevel and gradient filters");
+                    self.report.skip("unknown filters");
                     continue;
                 }
             };
@@ -288,30 +382,62 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// An instance's `Color`: alpha, tint, or brightness (a tint towards white or black by that
+    /// amount, which is the same colour change). Other channel multipliers and offsets
+    /// (Animate's Advanced style) keep only their alpha, and are reported.
+    fn color_effect(&mut self, c: &X) -> ColorEffect {
+        let mut fx = ColorEffect { alpha: c.f32("alphaMultiplier").unwrap_or(1.0).clamp(0.0, 1.0), ..ColorEffect::default() };
+        if let Some(t) = c.f32("tintMultiplier") {
+            fx.tint = color(c, "tintColor", "__none");
+            fx.tint_amount = t.clamp(0.0, 1.0);
+        } else if let Some(b) = c.f32("brightness").filter(|b| *b != 0.0) {
+            fx.tint = if b > 0.0 { Rgba::WHITE } else { Rgba::BLACK };
+            fx.tint_amount = b.abs().min(1.0);
+        } else {
+            let multiplied = ["redMultiplier", "greenMultiplier", "blueMultiplier"].iter().any(|k| c.f32(k).is_some_and(|v| v != 1.0));
+            let offset = ["redOffset", "greenOffset", "blueOffset", "alphaOffset"].iter().any(|k| c.f32(k).is_some_and(|v| v != 0.0));
+            if multiplied || offset {
+                self.report.skip("advanced colour effects (only alpha kept)");
+            }
+        }
+        fx
+    }
+
     fn instance(&mut self, el: &X, parent: &Affine, out: &mut Vec<Arc<Element>>) {
         let Some(&symbol) = el.attr("libraryItemName").and_then(|n| self.ids.get(n)) else {
             self.report.skip("instances of missing symbols");
             return;
         };
-        let loop_mode = match el.attr("loop") {
+        let loop_mode = match el.attr("loop").map(str::trim) {
             Some("play once") => LoopMode::PlayOnce,
             Some("single frame") => LoopMode::SingleFrame,
+            Some(r @ ("play once reverse" | "loop reverse")) => {
+                self.report.skip("reverse loop modes (played forward)");
+                if r == "loop reverse" { LoopMode::Loop } else { LoopMode::PlayOnce }
+            }
             _ => LoopMode::Loop,
         };
         let first_frame = el.u32("firstFrame").unwrap_or(0).min(MAX_FRAME);
-        let mut fx = ColorEffect::default();
-        if let Some(c) = el.child("color").and_then(|c| c.child("Color")) {
-            fx.alpha = c.f32("alphaMultiplier").unwrap_or(1.0).clamp(0.0, 1.0);
-            if let Some(t) = c.f32("tintMultiplier") {
-                fx.tint = color(c, "tintColor", "__none");
-                fx.tint_amount = t.clamp(0.0, 1.0);
-            }
-        }
+        let fx = el.child("color").and_then(|c| c.child("Color")).map_or_else(ColorEffect::default, |c| self.color_effect(c));
         let m = parent.mul(&matrix(el));
         // Blend modes by Animate's names; unknown ones stay Normal.
         let blend = el.attr("blendMode").and_then(BlendMode::from_key).unwrap_or_default();
         let filters = self.filters(el);
-        out.push(self.element(ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters }, m, fx));
+        let mut e = Element { id: ElementId(self.doc.alloc_id()), name: String::new(), transform: m, color: fx, kind: ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events: Vec::new() } };
+        // The instance name actions address it by (ADR 0024); one they couldn't is reported.
+        if let Some(name) = el.attr("name").map(str::trim).filter(|n| !n.is_empty()) {
+            if anicraft_doc::actions::valid_instance_name(name) {
+                e.name = name.to_string();
+            } else {
+                self.report.skip("instance names actions can't use (left out)");
+            }
+        }
+        // Older documents put handlers (`on (release) { … }`) on instances; only frame
+        // scripts have a place yet.
+        if el.child("Actionscript").is_some() {
+            self.report.skip("scripts on instances (left out; frame scripts are kept)");
+        }
+        out.push(Arc::new(e));
     }
 
     fn elements(&mut self, list: &[X], parent: &Affine, out: &mut Vec<Arc<Element>>, depth: usize) {
@@ -372,13 +498,21 @@ impl<'a> Builder<'a> {
                 let start = f.u32("index").unwrap_or(0).min(MAX_FRAME);
                 let duration = f.u32("duration").unwrap_or(1).clamp(1, MAX_FRAME);
                 let mut k = Keyframe::new(start, duration);
-                k.label = f.attr("name").unwrap_or("").chars().take(256).collect();
+                // A frame's name is a label (or an anchor, a label too); a comment is a note
+                // to the animator that nothing can go to, which AniCraft has no place for yet.
+                if f.attr("labelType").map(str::trim) == Some("comment") {
+                    self.report.skip("frame comments");
+                } else {
+                    k.label = f.attr("name").unwrap_or("").chars().take(256).collect();
+                }
                 match f.attr("tweenType") {
                     Some(t @ ("motion" | "shape")) => {
-                        let acc = f.f32("acceleration").unwrap_or(0.0).clamp(-100.0, 100.0);
                         let kind = if t == "shape" { TweenKind::Shape } else { TweenKind::Classic };
                         let orient = f.bool("motionTweenOrientToPath").unwrap_or(false);
-                        k.tween = Some(Tween { easing: if acc == 0.0 { Easing::Linear } else { Easing::Classic(acc) }, kind, orient });
+                        if kind == TweenKind::Classic && f.attr("motionTweenRotate").is_some_and(|r| matches!(r.trim(), "clockwise" | "counter-clockwise")) {
+                            self.report.skip("tween spins (turned the shortest way)");
+                        }
+                        k.tween = Some(Tween { easing: self.easing(f), kind, orient });
                     }
                     Some("motion object") => self.report.skip("motion tweens (kept as keyframes)"),
                     _ => {}
@@ -387,9 +521,9 @@ impl<'a> Builder<'a> {
                 if let Some(h) = f.child("shapeHints").filter(|h| !h.children.is_empty()) {
                     raw_hints.insert(start, self.raw_hints(h));
                 }
-                // Frame scripts aren't kept yet (ADR 0013); say so instead of dropping them quietly.
-                if f.child("Actionscript").is_some() {
-                    self.report.skip("frame scripts (ActionScript isn't supported yet)");
+                // Frame scripts are kept verbatim and not run (ADR 0013 tier 1).
+                if let Some(a) = f.child("Actionscript") {
+                    k.script = self.frame_script(a);
                 }
                 let mut els = Vec::new();
                 self.elements(f.list("elements"), &Affine::IDENTITY, &mut els, 0);
@@ -412,6 +546,46 @@ impl<'a> Builder<'a> {
         // Links that do not form an unbroken run under their mask are dropped.
         tl.repair_masks();
         tl
+    }
+
+    /// A frame's `<Actionscript><script>` text, exactly as written (its `<script>` elements in
+    /// order, though files have one), in the document's language.
+    fn frame_script(&mut self, a: &X) -> Option<FrameScript> {
+        let parts: Vec<&str> = a.children.iter().filter(|c| c.name == "script").map(|c| c.text.as_str()).collect();
+        let text = parts.join("\n");
+        if text.trim().is_empty() {
+            return None;
+        }
+        let script = SourceScript::new(self.language, text);
+        if script.check().is_err() {
+            self.report.skip("frame scripts over 1 MiB (left out)");
+            return None;
+        }
+        self.report.keep(&format!("frame scripts in {}", self.language.label()));
+        Some(FrameScript::Source(Arc::new(script)))
+    }
+
+    /// A tween's ease: the classic single-slider `acceleration`, or a custom ease curve. A
+    /// curve of one segment (four points from (0, 0) to (1, 1)) is a cubic Bézier exactly; a
+    /// longer one, or one per property, is drawn with the slider's ease and reported.
+    fn easing(&mut self, f: &X) -> Easing {
+        let acc = f.f32("acceleration").unwrap_or(0.0).clamp(-100.0, 100.0);
+        let classic = if acc == 0.0 { Easing::Linear } else { Easing::Classic(acc) };
+        if f.bool("hasCustomEase") != Some(true) {
+            return classic;
+        }
+        let curves: Vec<&X> = f.list("tweens").iter().filter(|c| c.name == "CustomEase").collect();
+        let one_curve = f.bool("useSingleEaseCurve") != Some(false) || curves.len() == 1;
+        let bezier = curves.first().filter(|_| one_curve).and_then(|c| {
+            let p: Vec<Vec2> = c.children.iter().filter(|p| p.name == "Point").take(5).map(|p| Vec2::new(p.f32("x").unwrap_or(0.0), p.f32("y").unwrap_or(0.0))).collect();
+            let [a, b, c, d] = p.as_slice() else { return None };
+            let near = |p: &Vec2, x: f32, y: f32| (p.x - x).abs() < 1e-3 && (p.y - y).abs() < 1e-3;
+            (near(a, 0.0, 0.0) && near(d, 1.0, 1.0)).then(|| Easing::CubicBezier(b.x.clamp(0.0, 1.0), b.y.clamp(-10.0, 10.0), c.x.clamp(0.0, 1.0), c.y.clamp(-10.0, 10.0)))
+        });
+        bezier.unwrap_or_else(|| {
+            self.report.skip("custom ease curves (drawn with the simple ease)");
+            classic
+        })
     }
 
     /// The hints listed in a frame's `shapeHints`, in letter order (ADR 0023). Each child is a
@@ -532,26 +706,73 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let name = item.attr("name").map(str::to_string).unwrap_or_else(|| href.trim_end_matches(".xml").to_string());
-            let kind = match item.attr("symbolType") {
-                Some("movie clip") => SymbolKind::MovieClip,
+            // The format leaves out default values, and a symbol's default type is movie clip:
+            // only graphics and buttons say what they are.
+            let kind = match item.attr("symbolType").map(str::trim) {
+                Some("graphic") => SymbolKind::Graphic,
                 Some("button") => SymbolKind::Button,
-                _ => SymbolKind::Graphic,
+                _ => SymbolKind::MovieClip,
             };
             let id = SymbolId(self.doc.alloc_id());
+            let linkage = self.linkage(&item);
             self.ids.insert(name.clone(), id);
-            self.pending.push((id, name, kind, item));
+            self.pending.push((id, name, kind, linkage, item));
+        }
+        Ok(())
+    }
+
+    /// A library symbol's script class (`linkageClassName`, or an older document's
+    /// `linkageIdentifier`, when `linkageExportForAS` doesn't turn it off) and its base class.
+    fn linkage(&mut self, item: &X) -> Option<Linkage> {
+        if item.attr("linkageExportForAS").is_some_and(|v| v.trim() != "true") {
+            return None;
+        }
+        let class = ["linkageClassName", "linkageIdentifier"].iter().find_map(|k| item.attr(k).map(str::trim).filter(|c| !c.is_empty()))?;
+        let base = item.attr("linkageBaseClass").map(str::trim).filter(|b| anicraft_doc::actions::valid_class_name(b)).unwrap_or("");
+        let l = Linkage { class: class.to_string(), base: base.to_string() };
+        if l.check().is_err() {
+            self.report.skip("linkage classes that aren't class names (left out)");
+            return None;
+        }
+        self.report.keep("linkage classes");
+        Some(l)
+    }
+
+    /// The script settings of the package's publish profile (`PublishSettings.xml`): the
+    /// language its frame scripts are written in (`ActionScriptVersion`; 3 when the file
+    /// doesn't say) and the document class (`DocumentClass`). The profile marked current is
+    /// used, else the first. A missing or unreadable file changes nothing: it is settings, not
+    /// content.
+    fn publish_settings(&mut self) -> Result<(), XflError> {
+        let Some(bytes) = (self.read)("PublishSettings.xml")? else { return Ok(()) };
+        let Ok(root) = xml::parse(&bytes) else { return Ok(()) };
+        let profiles: Vec<&X> = root.children.iter().filter(|c| c.name == "flash_profile").collect();
+        let profile = profiles.iter().find(|p| p.bool("current") == Some(true)).or(profiles.first()).copied().unwrap_or(&root);
+        let flash = profile.child("PublishFlashProperties").unwrap_or(profile);
+        let text = |name: &str| flash.child(name).map(|e| e.text.trim().to_string()).filter(|t| !t.is_empty());
+        self.language = match text("ActionScriptVersion").as_deref() {
+            Some("1" | "2") => Language::ActionScript1or2,
+            _ => Language::ActionScript3,
+        };
+        if let Some(class) = text("DocumentClass") {
+            if anicraft_doc::actions::valid_class_name(&class) {
+                self.doc.document_class = class;
+                self.report.keep("document class");
+            } else {
+                self.report.skip("document classes that aren't class names (left out)");
+            }
         }
         Ok(())
     }
 
     fn build_symbols(&mut self) {
-        for (id, name, kind, item) in std::mem::take(&mut self.pending) {
+        for (id, name, kind, linkage, item) in std::mem::take(&mut self.pending) {
             let timeline = match item.child("timeline").and_then(|t| t.child("DOMTimeline")) {
                 Some(tl) => self.timeline(tl),
                 None => Timeline { layers: vec![Arc::new(Layer::new(LayerId(self.doc.alloc_id()), "Layer 1"))] },
             };
             let short = name.rsplit('/').next().unwrap_or(&name).to_string();
-            self.doc.library.push(Arc::new(Symbol { id, name: short, kind, timeline }));
+            self.doc.library.push(Arc::new(Symbol { id, name: short, kind, linkage, timeline }));
         }
     }
 }
@@ -574,7 +795,12 @@ fn import_from<'a>(read: &'a Reader<'a>, fonts: Option<&'a Fonts>) -> Result<(Do
     if root.name != "DOMDocument" {
         return Err(XflError::NotXfl(format!("the root element is <{}>", root.name)));
     }
-    let mut b = Builder { doc: Document::default(), read, ids: HashMap::new(), pending: Vec::new(), bitmaps: HashMap::new(), report: Report::default(), fonts, faces: HashMap::new() };
+    let mut b = Builder { doc: Document::default(), read, ids: HashMap::new(), pending: Vec::new(), language: Language::ActionScript3, bitmaps: HashMap::new(), report: Report::default(), fonts, faces: HashMap::new() };
+    b.publish_settings()?;
+    // Only symbols keep a script class yet.
+    for _ in root.list("media").iter().filter(|m| m.attr("linkageClassName").is_some_and(|c| !c.trim().is_empty())) {
+        b.report.skip("linkage classes on bitmaps and sounds (left out)");
+    }
     b.doc.library.clear();
     b.doc.scenes.clear();
     b.doc.stage = Stage {
@@ -600,18 +826,28 @@ fn import_from<'a>(read: &'a Reader<'a>, fonts: Option<&'a Fonts>) -> Result<(Do
     Ok((b.doc, b.report))
 }
 
+/// Largest `.fla` archive read.
+pub const MAX_FLA_BYTES: u64 = crate::zip::MAX_ENTRY as u64 * 4;
+
+/// Imports a `.fla` archive from its bytes (a file the browser handed over, say).
+pub fn import_fla(data: &[u8]) -> Result<(Document, Report), XflError> {
+    if data.len() as u64 > MAX_FLA_BYTES {
+        return Err(XflError::NotXfl("the file is too large".into()));
+    }
+    let archive = crate::zip::Archive::open(data)?;
+    let read = |p: &str| -> Result<Option<Vec<u8>>, XflError> { Ok(archive.read(p)?) };
+    import_with(&read)
+}
+
 /// Imports from disk: an XFL folder, its `.xfl` file, or a `.fla` archive.
 pub fn import_path(path: &std::path::Path) -> Result<(Document, Report), XflError> {
     let meta = std::fs::metadata(path)?;
     let is_fla = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("fla"));
     if meta.is_file() && is_fla {
-        if meta.len() as usize > crate::zip::MAX_ENTRY * 4 {
+        if meta.len() > MAX_FLA_BYTES {
             return Err(XflError::NotXfl("the file is too large".into()));
         }
-        let data = std::fs::read(path)?;
-        let archive = crate::zip::Archive::open(&data)?;
-        let read = |p: &str| -> Result<Option<Vec<u8>>, XflError> { Ok(archive.read(p)?) };
-        return import_with(&read);
+        return import_fla(&std::fs::read(path)?);
     }
     let dir = if meta.is_dir() { path.to_path_buf() } else { path.parent().map(std::path::Path::to_path_buf).unwrap_or_default() };
     let read = |p: &str| -> Result<Option<Vec<u8>>, XflError> {

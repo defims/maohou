@@ -1,7 +1,7 @@
-# ADR 0026: Folder compositing, layer effect stack, style table, four gradient paints
+# ADR 0103: Folder compositing, layer effect stack, style table, four gradient paints
 
 * Status: accepted (2026-11-10)
-* Relates to: ADR 0025 (property channels), ADR 0024 (Moho import), ADR 0007 (tiled stage),
+* Relates to: ADR 0102 (property channels), ADR 0101 (Moho import), ADR 0007 (tiled stage),
   ADR 0004 (destructive-action tiers), the Moho parity plan (fork plan › stage 3)
 
 ## Context

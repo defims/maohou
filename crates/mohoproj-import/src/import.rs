@@ -8,7 +8,7 @@ use crate::json::{self, array, get};
 use crate::layer::{self, FlatLayer};
 use crate::zip::Archive;
 use crate::MohoError;
-use anicraft_doc::{Bitmap, BitmapId, Camera, Document, MaohouSidecar, Rgba, Scene, Stage, Timeline};
+use anicraft_doc::{Bitmap, BitmapId, Document, MaohouSidecar, Rgba, Scene, SceneCamera, Stage, Timeline};
 use anicraft_doc::Channel as DocChannel;
 use anicraft_geom::{Affine, Vec2};
 use anicraft_text::{FaceMatch, Fonts};
@@ -232,7 +232,7 @@ fn document_settings(report: &mut Report, pd: &Value) {
     }
 }
 
-/// The document's named style table (Moho's `styles[]`, ADR 0026): the fill/line a style
+/// The document's named style table (Moho's `styles[]`, ADR 0103): the fill/line a style
 /// defines, by name. Every document carries Moho's 12 built-in brush styles, which define
 /// nothing (their `define_*` flags are false) — those come across as bare names, and their
 /// brush settings stay in the sidecar. Shapes keep their inline paints either way.
@@ -257,7 +257,7 @@ fn named_styles(b: &mut Builder, root: &Value) {
 /// project frame range (Moho's `animated_values` and `project_data`). The camera's z and
 /// pan/tilt have no 2D slot — counted when they carry values.
 fn scene_animation(b: &mut Builder, animated: &Value) -> SceneAnim {
-    let mut camera = Camera::default();
+    let mut camera = SceneCamera::default();
     let mut zed = 0.0f64;
     // The camera position is a *point* in Moho's inch space: it maps through the full
     // inch→pixel transform (canvas centre included), not the translation delta.
@@ -310,7 +310,7 @@ fn scene_animation(b: &mut Builder, animated: &Value) -> SceneAnim {
 
 /// The scene-level animation read out of one import.
 struct SceneAnim {
-    camera: Camera,
+    camera: SceneCamera,
     markers: Vec<(u32, String)>,
     frames: (u32, u32),
 }

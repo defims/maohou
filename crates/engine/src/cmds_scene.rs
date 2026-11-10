@@ -47,7 +47,7 @@ fn scene_json(s: &Session) -> Value {
     let mut v = json!({"scene": s.scene, "name": name, "scenes": s.doc.scenes.len(), "frames": s.frame_count()});
     if let Some(scene) = s.doc.scenes.get(s.scene) {
         if !scene.camera.is_neutral() {
-            v["camera"] = crate::cmds_camera::camera_json(scene);
+            v["camera"] = crate::cmds_maohou_camera::camera_json(scene);
         }
         if !scene.markers.is_empty() {
             v["markers"] = json!(scene.markers.iter().map(|(f, label)| json!({"frame": f, "label": label})).collect::<Vec<_>>());

@@ -50,8 +50,22 @@ fn discover() -> Option<PathBuf> {
     None
 }
 
+/// Release builds set this (packaging/, ADR 0026): a build that would ship without its icon then
+/// fails instead of warning.
+fn required(var: &str) -> bool {
+    println!("cargo:rerun-if-env-changed={var}");
+    std::env::var(var).is_ok_and(|v| v == "1")
+}
+
+/// Stops the build with a message (only for the release requirement above).
+fn fail(message: &str) -> ! {
+    eprintln!("error: {message}");
+    std::process::exit(1);
+}
+
 /// Windows only: embed the app icon into `anicraft.exe` (taskbar, Start menu, Explorer, Alt-Tab).
-/// A missing resource compiler is a warning, so a cross-compile still links.
+/// A missing resource compiler is a warning, so a cross-compile still links, unless
+/// `ANICRAFT_REQUIRE_WINRES=1` (packaging/windows/package.ps1).
 fn windows_icon() {
     println!("cargo:rerun-if-changed=assets/app-icon/anicraft.ico");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
@@ -60,11 +74,28 @@ fn windows_icon() {
     let mut res = winresource::WindowsResource::new();
     res.set_icon("assets/app-icon/anicraft.ico").set("ProductName", "AniCraft").set("FileDescription", "AniCraft 2D vector animation studio");
     if let Err(e) = res.compile() {
+        if required("ANICRAFT_REQUIRE_WINRES") {
+            fail(&format!("ANICRAFT_REQUIRE_WINRES=1 but anicraft.exe's icon and version resource could not be embedded: {e}"));
+        }
         println!("cargo:warning=anicraft.exe built without its icon: {e}");
     }
 }
 
+/// The desktop-only features (ADR 0036) as cfgs: `gpu_stage` and `sound_output` are on when
+/// their feature is and the target isn't the web, so `cargo build --target wasm32-unknown-unknown`
+/// works with the default features and the web build draws on the CPU, silently.
+fn native_features() {
+    println!("cargo::rustc-check-cfg=cfg(gpu_stage, sound_output)");
+    let web = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
+    for (feature, cfg) in [("CARGO_FEATURE_GPU_STAGE", "gpu_stage"), ("CARGO_FEATURE_SOUND_OUTPUT", "sound_output")] {
+        if std::env::var_os(feature).is_some() && !web {
+            println!("cargo::rustc-cfg={cfg}");
+        }
+    }
+}
+
 fn main() {
+    native_features();
     windows_icon();
     println!("cargo:rerun-if-env-changed=CRAFT_FONTS_DIR");
     println!("cargo:rerun-if-changed=build.rs");

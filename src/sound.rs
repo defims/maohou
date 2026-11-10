@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 pub struct SoundOut {
     player: Arc<Mutex<Player>>,
     failed: Arc<AtomicBool>,
-    #[cfg(feature = "sound-output")]
+    #[cfg(sound_output)]
     stream: Option<cpal::Stream>,
     tried: bool,
     rate: u32,
@@ -33,7 +33,7 @@ impl SoundOut {
         SoundOut {
             player: Arc::new(Mutex::new(Player::new(48_000))),
             failed: Arc::new(AtomicBool::new(false)),
-            #[cfg(feature = "sound-output")]
+            #[cfg(sound_output)]
             stream: None,
             tried: false,
             rate: 48_000,
@@ -48,7 +48,7 @@ impl SoundOut {
         if !self.tried {
             self.tried = true;
             match open(&self.player, &self.failed) {
-                #[cfg(feature = "sound-output")]
+                #[cfg(sound_output)]
                 Ok((stream, rate)) => {
                     self.stream = Some(stream);
                     self.rate = rate;
@@ -56,7 +56,7 @@ impl SoundOut {
                         *p = Player::new(rate);
                     }
                 }
-                #[cfg(not(feature = "sound-output"))]
+                #[cfg(not(sound_output))]
                 Ok(rate) => self.rate = rate,
                 Err(e) => self.error = Some(e),
             }
@@ -66,9 +66,9 @@ impl SoundOut {
 
     /// The device is open and working.
     fn live(&self) -> bool {
-        #[cfg(feature = "sound-output")]
+        #[cfg(sound_output)]
         let open = self.stream.is_some();
-        #[cfg(not(feature = "sound-output"))]
+        #[cfg(not(sound_output))]
         let open = false;
         open && !self.failed.load(Ordering::Relaxed)
     }
@@ -103,8 +103,7 @@ impl SoundOut {
 
     /// A one-frame snippet of the stream sounds at movie frame `frame` (scrubbing).
     pub fn scrub(&mut self, doc: &Document, state: StateId, frame: u32) {
-        let streams = doc.scenes.iter().any(|s| s.timeline.layers.iter().any(|l| l.keyframes.iter().any(|k| k.sound.is_some_and(|f| f.sync == sound::SoundSync::Stream))));
-        if !streams || !self.ready() {
+        if !sound::has_streams(doc) || !self.ready() {
             return;
         }
         self.sync(doc, state);
@@ -116,16 +115,56 @@ impl SoundOut {
 
     /// Plays a library sound on its own (the Library's preview button).
     pub fn preview(&mut self, pcm: Arc<Pcm>) {
+        let end = Voice::play_frames(&pcm, self.rate);
+        self.preview_voice(Voice::new(pcm, VoiceKind::Event, 0, end));
+    }
+
+    /// Plays one voice on its own from its start (a library sound, or a keyframe's sound with
+    /// its effect from the envelope editor).
+    pub fn preview_voice(&mut self, voice: Voice) {
         if !self.ready() {
             return;
         }
-        let end = Voice::play_frames(&pcm, self.rate);
-        let voices = Arc::new(vec![Voice { pcm, kind: VoiceKind::Event, at: 0, end, gain: 1.0 }]);
+        self.previewing = true;
+        self.with_player(|p| {
+            p.set_voices(Arc::new(vec![voice]));
+            p.play(0);
+        });
+    }
+
+    /// The output rate (what voices for [`SoundOut::preview_voice`] and
+    /// [`SoundOut::set_movie`] are laid out at).
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// Test Movie's sound (ADR 0039): plays `voices` (laid out by the player as the movie
+    /// runs) from output frame `from`. Whether sound can be heard.
+    pub fn play_movie(&mut self, voices: Arc<Vec<Voice>>, from: u64) -> bool {
+        if !self.ready() {
+            return false;
+        }
         self.previewing = true;
         self.with_player(|p| {
             p.set_voices(voices);
-            p.play(0);
-        });
+            p.play(from);
+        })
+        .is_some()
+    }
+
+    /// New voices for Test Movie, carrying on from where it plays.
+    pub fn set_movie(&mut self, voices: Arc<Vec<Voice>>) {
+        if self.previewing {
+            self.with_player(|p| p.set_voices(voices));
+        }
+    }
+
+    /// The output frame Test Movie's sound has reached while it plays.
+    pub fn movie_position(&self) -> Option<u64> {
+        if !self.previewing || !self.is_playing() {
+            return None;
+        }
+        self.with_player(|p| p.position())
     }
 
     /// Fades out and goes quiet.
@@ -149,7 +188,7 @@ impl SoundOut {
     }
 }
 
-#[cfg(feature = "sound-output")]
+#[cfg(sound_output)]
 fn open(player: &Arc<Mutex<Player>>, failed: &Arc<AtomicBool>) -> Result<(cpal::Stream, u32), String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     let device = cpal::default_host().default_output_device().ok_or("no sound output device")?;
@@ -168,14 +207,14 @@ fn open(player: &Arc<Mutex<Player>>, failed: &Arc<AtomicBool>) -> Result<(cpal::
     Ok((stream, rate))
 }
 
-#[cfg(not(feature = "sound-output"))]
+#[cfg(not(sound_output))]
 fn open(_: &Arc<Mutex<Player>>, _: &Arc<AtomicBool>) -> Result<u32, String> {
-    Err("this build of AniCraft has no sound output".into())
+    Err(if cfg!(target_arch = "wasm32") { "the web version of AniCraft has no sound output yet".into() } else { "this build of AniCraft has no sound output".into() })
 }
 
 /// An output stream whose callback mixes from the player. The lock is held only while one
 /// buffer is mixed; the UI holds it only to change a few fields.
-#[cfg(feature = "sound-output")]
+#[cfg(sound_output)]
 fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(device: &cpal::Device, config: cpal::StreamConfig, player: &Arc<Mutex<Player>>, failed: &Arc<AtomicBool>) -> Result<cpal::Stream, cpal::Error> {
     use cpal::traits::DeviceTrait;
     let channels = usize::from(config.channels);

@@ -67,7 +67,14 @@ fn item(app: &mut App, ui: &mut egui::Ui, spec: &CommandSpec) {
         _ => spec.label.to_string(),
     };
     let button = egui::Button::new(label).shortcut_text(text(Type::Key, platform::shortcut_label(app.keymap.primary(spec.id).unwrap_or(""))));
-    if ui.add_enabled(enabled(app, spec.id), button).clicked() {
+    // What this build can't do stays in its usual place, dimmed, saying why (the web build).
+    let missing = platform::unavailable(spec.id);
+    let r = ui.add_enabled(enabled(app, spec.id) && missing.is_none(), button);
+    let r = match missing {
+        Some(why) => r.on_disabled_hover_text(why),
+        None => r,
+    };
+    if r.clicked() {
         app.invoke(spec.id);
         ui.close();
     }
@@ -134,7 +141,8 @@ fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &[CommandSpe
 
     match top {
         // Windows / Linux conventions; on macOS these live in the AniCraft (application) menu.
-        "File" if platform::OS != Os::Mac => {
+        // A web page is closed with its tab.
+        "File" if platform::OS != Os::Mac && !platform::WEB => {
             ui.separator();
             if ui_item(ui, "Exit", "Ctrl+Q", None) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -166,6 +174,9 @@ fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &[CommandSpe
             ui.separator();
             if ui_item(ui, "Onion Skin", "", Some(app.onion)) {
                 app.onion = !app.onion;
+            }
+            if ui_item(ui, "Preview Through Camera", "", Some(app.camera_preview)) {
+                app.toggle_camera_preview();
             }
             ui.menu_button("Stage Rendering", |ui| {
                 for (mode, name, tip) in crate::prefs::RenderMode::ALL {
@@ -208,6 +219,9 @@ fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &[CommandSpe
             if ui_item(ui, "Motion Editor", "", Some(app.bottom == BottomTab::MotionEditor)) {
                 app.bottom = BottomTab::MotionEditor;
             }
+            if ui_item(ui, "Actions", app.keymap.primary("view.actions").unwrap_or(""), Some(app.show_actions)) {
+                app.show_actions = !app.show_actions;
+            }
             ui.separator();
             if ui_item(ui, "Onion Skin", "", Some(app.onion)) {
                 app.onion = !app.onion;
@@ -222,7 +236,8 @@ fn menu_contents(app: &mut App, ui: &mut egui::Ui, top: &str, cmds: &[CommandSpe
                 app.show_shortcuts = true;
             }
             ui.separator();
-            if ui_item(ui, "Project Files & Docs…", "", None) {
+            // (The web build has no folders to show.)
+            if !platform::WEB && ui_item(ui, "Project Files & Docs…", "", None) {
                 app.show_files = true;
             }
             if ui_item(ui, "Licenses & Notices", "", None) {

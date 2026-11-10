@@ -1,4 +1,4 @@
-//! Property-level animation channels (ADR 0025): one animatable value, its keys, and the
+//! Property-level animation channels (ADR 0102): one animatable value, its keys, and the
 //! segments between them.
 //!
 //! AniCraft's keyframe spans animate *artwork* — a whole keyframe tweens into the next one.

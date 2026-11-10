@@ -1,4 +1,4 @@
-//! Animated transform channels → AniCraft's property channels (ADR 0025): the stage-2
+//! Animated transform channels → AniCraft's property channels (ADR 0102): the stage-2
 //! animation foundation. A Moho channel `{when[], val[], interp[]}` maps key by key onto a
 //! [`anicraft_doc::Channel`]; frames are already 0-based (corpus: CharWalk keys 0..45,
 //! follow-path 0..50, Lua `SetValue(v, 0)`), so `when` moves over untouched.

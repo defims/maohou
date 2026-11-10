@@ -57,7 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Writes the given transform channels as keys at `at_frame` (the playhead unless given):
-/// the Moho-style layer animation (ADR 0025). Values are stage pixels and screen degrees.
+/// the Moho-style layer animation (ADR 0102). Values are stage pixels and screen degrees.
 fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
     let frame = opt_u32(p, "at_frame")?.unwrap_or(s.frame).min(100_000);
     let translation = opt_vec2(p, "translation")?;
@@ -125,7 +125,7 @@ fn clear_transform(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"layers": cleared}))
 }
 
-/// Writes a key on the layer's opacity channel (Moho's layer alpha; ADR 0026). `0..=1`.
+/// Writes a key on the layer's opacity channel (Moho's layer alpha; ADR 0103). `0..=1`.
 fn set_opacity(s: &mut Session, p: &Value) -> Result<Value> {
     let frame = opt_u32(p, "at_frame")?.unwrap_or(s.frame).min(100_000);
     let (opacity,) = opt_f32(p, "opacity")?.map(|v| (v,)).ok_or_else(|| EngineError::Param("opacity (0..=1) is required".into()))?;
@@ -151,7 +151,7 @@ fn clear_opacity(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"layers": cleared}))
 }
 
-/// Replaces the layer's effect stack (Moho's layer effects; ADR 0026). Each filter is the
+/// Replaces the layer's effect stack (Moho's layer effects; ADR 0103). Each filter is the
 /// file's own `{"type": ...}` form, values clamped to range; at most 16.
 fn set_filters(s: &mut Session, p: &Value) -> Result<Value> {
     let Some(list) = p.get("filters").and_then(Value::as_array) else {
@@ -268,6 +268,9 @@ fn set_type(s: &mut Session, id: LayerId, ty: &str) -> Result<()> {
     if tl.layers.get(i).is_some_and(|l| l.kind == LayerKind::Folder) {
         return Err(EngineError::State("a folder holds layers; it can't become another kind of layer".into()));
     }
+    if tl.layers.get(i).is_some_and(|l| l.kind == LayerKind::Camera) {
+        return Err(EngineError::State("the camera layer holds the camera; it can't become another kind of layer (Remove Camera takes it away)".into()));
+    }
     // Whatever the type, the layer stays in the folder it is in.
     let folder = tl.folder_of(i);
     let (kind, parent) = match ty {
@@ -301,6 +304,7 @@ fn layer_type_json(s: &Session, id: LayerId) -> Value {
         LayerKind::Mask => "mask",
         LayerKind::Guide => "guide",
         LayerKind::Folder => "folder",
+        LayerKind::Camera => "camera",
         LayerKind::Normal if masked_by.is_some() => "masked",
         LayerKind::Normal if guided_by.is_some() => "guided",
         LayerKind::Normal => "normal",
@@ -476,7 +480,14 @@ pub(crate) fn insert_keyframe_at(layer: &mut Layer, frame: u32, copy: bool) -> R
             let end = k.end();
             let tween = if copy { k.tween } else { None };
             // A motion tween split in two keeps moving the same way in both halves.
-            let motion = if copy { k.motion.as_ref().map(|m| m.split_at(frame - k.start)) } else { None };
+            let motion = if copy {
+                k.motion.as_ref().map(|m| {
+                    let base = m.target_index(&k.elements).and_then(|t| k.elements.get(t)).map_or(anicraft_doc::Props([0.0; 8]), |e| anicraft_doc::Props::of(e));
+                    m.split_at(&base, frame - k.start)
+                })
+            } else {
+                None
+            };
             k.duration = frame - k.start;
             let mut nk = Keyframe::new(frame, end - frame);
             nk.elements = elements.unwrap_or_default();
@@ -612,6 +623,7 @@ fn move_across_layers(s: &mut Session, p: &Value, from: u32, to: u32, by: i64, l
         }
         let (a, b) = (a as u32, b as u32);
         let layer = s.layer_mut(Some(dst))?;
+        crate::cmds_camera::keys_fit(layer.kind, keys.iter())?;
         // Cut the target at both ends of the landing range so what lies outside it stays.
         if layer.keyframe_index_at(a).is_some_and(|i| layer.keyframes.get(i).is_some_and(|k| k.start < a)) {
             insert_keyframe_at(layer, a, true)?;
@@ -814,7 +826,7 @@ fn delete_layer(s: &mut Session, p: &Value) -> Result<Value> {
     let i = tl.layers.iter().position(|l| l.id == id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
     let is_folder = tl.layers.get(i).is_some_and(|l| l.kind == LayerKind::Folder);
     let range = if is_folder { tl.group_range(i) } else { i..i + 1 };
-    let drawable_left = tl.layers.iter().enumerate().filter(|(j, l)| !range.contains(j) && l.kind != LayerKind::Folder).count();
+    let drawable_left = tl.layers.iter().enumerate().filter(|(j, l)| !range.contains(j) && !matches!(l.kind, LayerKind::Folder | LayerKind::Camera)).count();
     if drawable_left == 0 {
         return Err(EngineError::State("a document needs at least one layer to draw on".into()));
     }

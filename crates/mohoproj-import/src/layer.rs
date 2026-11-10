@@ -7,7 +7,7 @@
 //! unbroken run under it (what `Timeline::repair_masks` and `group_range` expect).
 //!
 //! Type mapping: Mesh/Image/Text layers carry content; Group/Bone/Switch layers flatten to
-//! folders that composite (ADR 0026): the container's transform channels, its `layer_effects`
+//! folders that composite (ADR 0103): the container's transform channels, its `layer_effects`
 //! alpha and its effect stack stay on the folder layer itself, and evaluation renders its
 //! whole run as one group — so a transformed, faded or filtered group behaves as in Moho, and
 //! its children keep their own channels instead of baking their ancestors'. A container with
@@ -77,7 +77,7 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
     let mut l = Layer::new(id, name);
     l.parent = into.parent;
     l.visible = layer_visibility(b, layer) && into.hide.is_none_or(|h| !h.contains(&l.name));
-    // The layer's effect stack: opacity and the static filters (ADR 0026). Any layer kind
+    // The layer's effect stack: opacity and the static filters (ADR 0103). Any layer kind
     // carries them in Moho.
     l.opacity = layer_opacity(b, layer);
     l.filters = layer_filters(b, layer);
@@ -282,7 +282,7 @@ fn layer_opacity(b: &mut Builder, layer: &Value) -> anicraft_doc::Channel<f32> {
     out
 }
 
-/// The layer's effect stack (ADR 0026), read at the import frame: Moho's `layer_effects`
+/// The layer's effect stack (ADR 0103), read at the import frame: Moho's `layer_effects`
 /// scalars plus its `layer_shadow` group. Channels become static values here — animated
 /// effect parameters are a later milestone and ride in the sidecar; `animated_layer_effects`
 /// is counted when the file says so.
@@ -443,7 +443,7 @@ fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<A
         name: String::new(),
         transform: b.to_px.mul(&world),
         color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero }),
+        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false }),
     }));
 }
 

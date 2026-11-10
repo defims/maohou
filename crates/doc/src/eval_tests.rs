@@ -82,11 +82,11 @@ fn nested_symbols_compose_transforms_and_cycles_terminate() {
             name: String::new(),
             transform: Affine::translate(1.0, 0.0),
             color: ColorEffect::default(),
-            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new() },
+            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
         },
     );
     tl.layers.push(Arc::new(layer));
-    d.library.push(Arc::new(Symbol { id: sid, name: "loop".into(), kind: SymbolKind::Graphic, timeline: tl }));
+    d.library.push(Arc::new(Symbol { id: sid, name: "loop".into(), kind: SymbolKind::Graphic, linkage: None, timeline: tl }));
     push(
         layer0(&mut d),
         0,
@@ -95,7 +95,7 @@ fn nested_symbols_compose_transforms_and_cycles_terminate() {
             name: String::new(),
             transform: Affine::translate(100.0, 0.0),
             color: ColorEffect { alpha: 0.5, ..Default::default() },
-            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new() },
+            kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
         },
     );
     let dl = evaluate(&d, 0);
@@ -141,13 +141,13 @@ fn masks_inside_symbols_nest_in_the_instance_clip() {
     // The main timeline's masked layer holds an instance of a symbol that has its own mask.
     let mut d = mask_doc();
     let sid = SymbolId(99);
-    d.library.push(Arc::new(Symbol { id: sid, name: "masked inside".into(), kind: SymbolKind::Graphic, timeline: mask_doc().timeline(0).clone() }));
+    d.library.push(Arc::new(Symbol { id: sid, name: "masked inside".into(), kind: SymbolKind::Graphic, linkage: None, timeline: mask_doc().timeline(0).clone() }));
     let inst = Element {
         id: ElementId(60),
         name: String::new(),
         transform: Affine::IDENTITY,
         color: ColorEffect::default(),
-        kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new() },
+        kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
     };
     push(Arc::make_mut(&mut d.timeline_mut(0).layers[1]), 0, inst);
     let dl = evaluate(&d, 0);
@@ -296,14 +296,14 @@ fn movie_clips_play_their_own_timeline_graphics_keep_step_buttons_hold_up() {
         })
         .collect();
     let mut d = Document::default();
-    d.library.push(Arc::new(Symbol { id: sid, name: "Clip".into(), kind: SymbolKind::MovieClip, timeline: Timeline { layers: vec![Arc::new(st)] } }));
+    d.library.push(Arc::new(Symbol { id: sid, name: "Clip".into(), kind: SymbolKind::MovieClip, linkage: None, timeline: Timeline { layers: vec![Arc::new(st)] } }));
     // The same instance on two keyframes back to back (frames 0–4 and 5–11), moved on the second.
     let inst = |x: f32| Element {
         id: ElementId(60),
         name: String::new(),
         transform: Affine::translate(x, 0.0),
         color: ColorEffect::default(),
-        kind: ElementKind::Symbol { symbol: sid, loop_mode: crate::LoopMode::Loop, first_frame: 0, blend: Default::default(), filters: Vec::new() },
+        kind: ElementKind::Symbol { symbol: sid, loop_mode: crate::LoopMode::Loop, first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
     };
     let (mut k0, mut k1) = (Keyframe::new(0, 5), Keyframe::new(5, 7));
     k0.elements.push(Arc::new(inst(0.0)));
@@ -465,7 +465,7 @@ fn shape_hints_survive_a_round_trip_and_old_files_have_none() {
     assert!(old.hints.is_empty());
 }
 
-// ----- layer transform channels + camera (ADR 0025) ------------------------------------
+// ----- layer transform channels + camera (ADR 0102) ------------------------------------
 
 fn rect_doc() -> Document {
     let mut d = Document::default();
@@ -570,7 +570,7 @@ fn scene_frame_range_bounds_playback() {
     assert_eq!((scene, local), (1, 0));
 }
 
-// ----- folder compositing, layer opacity and filters (ADR 0026) -------------------------
+// ----- folder compositing, layer opacity and filters (ADR 0103) -------------------------
 
 /// Two layers: a folder on top with a child below it (the child names the folder as its
 /// parent), each holding one rectangle.
