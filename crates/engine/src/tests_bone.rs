@@ -76,7 +76,8 @@ fn a_rig_holds_bones_and_poses_them_over_time() {
     assert_eq!(tl.layers[0].name, "Rig");
     // Bones chain: the second hangs off the first's tip by default.
     run(&mut s, "bone.add", json!({"name": "root", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
-    run(&mut s, "bone.add", json!({"name": "tip", "length": 40.0}));
+    // The second bone draws at the first's tip: pos = the parent length, Moho-style.
+    run(&mut s, "bone.add", json!({"name": "tip", "length": 40.0, "pos": [60.0, 0.0]}));
     let sk = s.doc.timeline(0).layer(rig).unwrap().skeleton.clone().unwrap();
     assert_eq!(sk.bones.len(), 2);
     assert_eq!(sk.bones[1].parent, Some(anicraft_doc::BoneId(0)));
@@ -126,7 +127,8 @@ fn ik_aims_the_chain_at_its_target() {
     let mut s = blank();
     let rig = LayerId(rig_with_art(&mut s, "Rig"));
     run(&mut s, "bone.add", json!({"name": "upper", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
-    run(&mut s, "bone.add", json!({"name": "fore", "length": 40.0}));
+    // The forearm joint sits at the upper arm's tip (pos = its length).
+    run(&mut s, "bone.add", json!({"name": "fore", "length": 40.0, "pos": [60.0, 0.0]}));
     // A goal bone OUTSIDE the chain — the way Moho IK targets work: a rooted control bone
     // (parent −1) parked at (170, 20), so its tip sits at (190, 20), inside the reach disc.
     run(&mut s, "bone.add", json!({"name": "goal", "parent": -1, "pos": [170.0, 20.0], "length": 20.0}));

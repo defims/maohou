@@ -5,8 +5,10 @@
 //! files serialize. Bones never enter the [`crate::DisplayList`]: evaluation computes each
 //! bone's world [`Affine`] per frame (pure, no state), and skinned artwork is drawn through
 //! those matrices. The chain math follows Moho's bone model: a bone extends along its local
-//! +x axis by `length`; a root bone sits in skeleton space at `pos`/`angle`; a child bone
-//! hangs off its parent's *tip*, its `pos` and `angle` measured in that tip frame.
+//! +x axis by `length`; a root bone sits in skeleton space at `pos`/`angle`; a child bone's
+//! `pos` is measured in its parent's frame, origin at the parent's *base* (corpus:
+//! CharWalk's Body hangs at CG's base with pos (0, 0), and children drawn at the tip store
+//! pos.x = the parent's length), and its `angle` relative to the parent's direction.
 //!
 //! Units are the stage's (ADR 0102): pixels, screen-clockwise radians, y down. Import
 //! converts Moho's inches and y-up CCW radians once, at the same conjugation every other
@@ -14,8 +16,9 @@
 //!
 //! Inverse kinematics (Moho's `target_bone`): a bone whose target is set swings — with its
 //! parent, a two-bone chain — so its tip reaches the target bone's tip (the analytic
-//! law-of-cosines solve; lengths hold, unreachable targets clamp at full stretch). Passes
-//! repeat at most `MAX_IK_PASSES` times and every walk is bounded, so a target cycle just
+//! two-circle solve through the child's joint offset; lengths hold, unreachable targets
+//! clamp at full stretch). Passes repeat at most `MAX_IK_PASSES` times and every walk is
+//! bounded, so a target cycle just
 //! settles. Chains through scaled or flipped bones don't solve (rare, and the frame
 //! arithmetic stops being a rotation) — the FK pose stands.
 //!
@@ -59,7 +62,8 @@ pub struct Bone {
     #[serde(default = "one_f")]
     pub strength: f32,
     /// The bone's base position over time: a root bone sits at it in skeleton space; a
-    /// child bone offsets from its parent's tip, in the parent's rotated frame.
+    /// child bone offsets from its parent's *base*, in the parent's rotated frame (a
+    /// child drawn at the parent's tip stores pos.x = the parent's length).
     #[serde(default, skip_serializing_if = "Channel::is_empty")]
     pub pos: Channel<Vec2>,
     /// The bone's direction over time, screen-clockwise radians; a child bone's angle is
@@ -301,6 +305,13 @@ impl Skeleton {
 
     /// Solves every chain's two-bone angles in place, repeating at most `MAX_IK_PASSES`
     /// times so chains aimed at other chains settle.
+    ///
+    /// In the parent's base frame both links share the parent's base as their pivot: the
+    /// child's joint sits at its stored `pos` (CharWalk-style rigs hang children past the
+    /// tip), swinging around that base with the parent's angle, and the child extends from
+    /// the joint. Solving for the child's tip on the goal tip is then a two-circle
+    /// intersection: the joint traces a circle of radius |pos| around the shoulder, and the
+    /// tip must land a child-length from the goal.
     fn solve_ik(&self, frame: u32, pose: &mut [Pose]) {
         let chains = self.chains(frame);
         if chains.is_empty() {
@@ -311,7 +322,7 @@ impl Skeleton {
             let mut changed = false;
             for c in &chains {
                 let (Some(a), Some(b)) = (self.bones.get(c.parent), self.bones.get(c.child)) else { continue };
-                if a.length <= 1e-6 || b.length <= 1e-6 {
+                if b.length <= 1e-6 {
                     continue;
                 }
                 // The goal tip, in the parent bone's base frame (its world matrix with its
@@ -320,6 +331,7 @@ impl Skeleton {
                 if (pose_p.scale - 1.0).abs() > 1e-6 || pose_p.flip_h || pose_p.flip_v {
                     continue;
                 }
+                let Some(pose_c) = pose.get(c.child).copied() else { continue };
                 let parent_base = parent_world.mul(&Affine::rotate(-pose_p.angle));
                 let goal = mats.get(c.target).copied().zip(self.bones.get(c.target)).map(|(m, tb)| m.apply(Vec2::new(tb.length, 0.0)));
                 let Some(goal) = goal.filter(|g| g.is_finite()) else { continue };
@@ -328,20 +340,12 @@ impl Skeleton {
                 if d <= 1e-6 {
                     continue;
                 }
-                // Interior angles of the reach triangle, clamped to full stretch.
-                let (al, bl) = (a.length, b.length);
-                let d = d.clamp((al - bl).abs() + 1e-6, al + bl - 1e-6);
-                let elbow = (((al * al + bl * bl - d * d) / (2.0 * al * bl)).clamp(-1.0, 1.0)).acos();
-                let shoulder = (((al * al + d * d - bl * bl) / (2.0 * al * d)).clamp(-1.0, 1.0)).acos();
-                let base = local.y.atan2(local.x);
-                // Bend toward the current pose: the swing side that moves it least. The
-                // elbow mirrors with the side: the straight swing bends the child back by
-                // +(π−elbow), the other swings by −(π−elbow).
-                let (straight, bent) = (base - shoulder, base + shoulder);
-                let cur = pose.get(c.parent).map(|p| p.angle).unwrap_or(0.0);
-                let straight_side = (cur - straight).abs() <= (cur - bent).abs();
-                let want = if straight_side { straight } else { bent };
-                let child_angle = if straight_side { std::f32::consts::PI - elbow } else { -(std::f32::consts::PI - elbow) };
+                // The joint circle: the stored joint (child base) sits at angle `phi0` in
+                // the parent's frame at radius d1; the parent's swing ψ aims it. Radius 0
+                // degenerates — only the child aims.
+                let d1 = pose_c.pos.length();
+                let phi0 = pose_c.pos.y.atan2(pose_c.pos.x);
+                let beta = local.y.atan2(local.x);
                 let clamp = |bone: &Bone, v: f32| {
                     if bone.constraints && bone.min_constraint <= bone.max_constraint {
                         v.clamp(bone.min_constraint, bone.max_constraint)
@@ -349,9 +353,37 @@ impl Skeleton {
                         v
                     }
                 };
+                let (want, child_angle) = if d1 <= 1e-6 {
+                    // The child pivots on the parent's base itself: aim it straight at the
+                    // goal (the parent's swing is unconstrained — leave it).
+                    (pose_p.angle, beta - pose_p.angle)
+                } else {
+                    // Two-circle intersection: the joint's foot x along the shoulder→goal
+                    // line, its height ±y off the line.
+                    let bl = b.length;
+                    let x = ((d1 * d1 + d * d - bl * bl) / (2.0 * d)).clamp(-d1, d1);
+                    let y2 = d1 * d1 - x * x;
+                    let (psi, joint) = if y2 > 1e-6 {
+                        // Bend toward the current pose: the swing side that moves it least.
+                        let y = y2.sqrt();
+                        let cur = pose_p.angle + phi0 - beta;
+                        let pick = if (cur - y.atan2(x)).abs() <= (cur - (-y).atan2(x)).abs() { y } else { -y };
+                        let psi = beta + pick.atan2(x);
+                        (psi, Vec2::new(d1 * psi.cos(), d1 * psi.sin()))
+                    } else {
+                        // Out of reach: full stretch along the goal's direction.
+                        (beta, Vec2::new(d1 * beta.cos(), d1 * beta.sin()))
+                    };
+                    // The parent's angle aims the stored joint at ψ; the child aims from
+                    // its solved joint at the goal.
+                    let want = psi - phi0;
+                    let child_world = (local.y - joint.y).atan2(local.x - joint.x);
+                    (want, child_world - want)
+                };
                 let want = clamp(a, want);
                 let child_angle = clamp(b, child_angle);
-                let cur_child = pose.get(c.child).map(|p| p.angle).unwrap_or(0.0);
+                let cur = pose_p.angle;
+                let cur_child = pose_c.angle;
                 if (cur - want).abs() > 1e-4 || (cur_child - child_angle).abs() > 1e-4 {
                     if let Some(p) = pose.get_mut(c.parent) {
                         p.angle = want;
@@ -390,9 +422,13 @@ impl Skeleton {
         let local = local_matrix(pose.get(i)?);
         let world = match b.parent {
             Some(p) if (p.0 as usize) < pose.len() => {
+                // A child's pose is in its parent's frame, origin at the parent's *base*
+                // (corpus: CharWalk's Body hangs at CG's base pos=(0,0); a child at the
+                // parent's tip stores pos.x = parent length; sketch_bones.lua maps the
+                // drawn base point by the parent rest matrix inverse) — so the parent's
+                // world matrix composes straight onto the child's local matrix.
                 let pw = self.world_at(p.0 as usize, pose, mats, depth + 1)?;
-                let pl = self.bones.get(p.0 as usize)?.length;
-                pw.mul(&Affine::translate(pl, 0.0)).mul(&local)
+                pw.mul(&local)
             }
             // A parent outside the table (a leftover link commands may build): root.
             _ => local,
@@ -542,29 +578,39 @@ mod tests {
     }
 
     #[test]
-    fn child_hangs_off_the_parent_tip() {
+    fn child_pos_is_in_the_parents_base_frame() {
+        // Moho's convention (CharWalk): a child drawn at the parent's tip stores
+        // pos.x = the parent's length; a child at pos (0, 0) shares the parent's base.
         let mut parent = bone("a", None, 100.0);
         parent.angle.set_key(0, 0.0);
         let mut child = bone("b", Some(BoneId(0)), 50.0);
+        child.pos.set_key(0, Vec2::new(100.0, 0.0));
         child.angle.set_key(0, FRAC_PI_2);
-        let sk = Skeleton { bones: vec![parent, child], ..Skeleton::default() };
+        let sk = Skeleton { bones: vec![parent.clone(), child], ..Skeleton::default() };
         let m = sk.matrices(0);
-        // Parent along +x; child starts at (100, 0) and turns down.
+        // Child base at the parent's tip (100, 0), turning down from there.
         let child_base = m[1].apply(Vec2::ZERO);
         assert!((child_base.x - 100.0).abs() < 1e-4 && child_base.y.abs() < 1e-4, "{child_base:?}");
         let child_tip = m[1].apply(Vec2::new(50.0, 0.0));
         assert!((child_tip.x - 100.0).abs() < 1e-4 && (child_tip.y - 50.0).abs() < 1e-4, "{child_tip:?}");
+        // A zero-pos child sits on the parent's base (CharWalk's Body on CG).
+        let mut at_base = bone("c", Some(BoneId(0)), 50.0);
+        at_base.angle.set_key(0, FRAC_PI_2);
+        let sk = Skeleton { bones: vec![parent.clone(), at_base], ..Skeleton::default() };
+        let base = sk.matrices(0)[1].apply(Vec2::ZERO);
+        assert!(base.length() < 1e-4, "{base:?}");
     }
 
     #[test]
     fn parent_rotation_carries_children() {
         let mut parent = bone("a", None, 100.0);
         parent.angle.set_key(0, FRAC_PI_2);
-        let child = bone("b", Some(BoneId(0)), 50.0);
+        let mut child = bone("b", Some(BoneId(0)), 50.0);
+        child.pos.set_key(0, Vec2::new(100.0, 0.0));
         let sk = Skeleton { bones: vec![parent, child], ..Skeleton::default() };
         let m = sk.matrices(0);
         let tip = m[1].apply(Vec2::new(50.0, 0.0));
-        // Whole chain turned: the child hangs off the (0,100) tip, further down.
+        // Whole chain turned: the child's tip hangs off the (0,100) tip, further down.
         assert!(tip.x.abs() < 1e-4 && (tip.y - 150.0).abs() < 1e-4, "{tip:?}");
     }
 
@@ -572,10 +618,11 @@ mod tests {
     fn scale_and_length_compose() {
         let mut parent = bone("a", None, 100.0);
         parent.scale.set_key(0, 2.0);
-        let child = bone("b", Some(BoneId(0)), 50.0);
+        let mut child = bone("b", Some(BoneId(0)), 50.0);
+        child.pos.set_key(0, Vec2::new(100.0, 0.0));
         let sk = Skeleton { bones: vec![parent, child], ..Skeleton::default() };
         let m = sk.matrices(0);
-        // The parent's doubled length carries the child's base twice as far, and the
+        // The parent's doubled scale carries the child's joint twice as far, and the
         // child's own frame scales with the chain (its 50 renders 100 long).
         let base = m[1].apply(Vec2::ZERO);
         assert!((base.x - 200.0).abs() < 1e-4, "{base:?}");
@@ -615,9 +662,10 @@ mod tests {
         let mut upper = bone("upper", None, 80.0);
         upper.angle.set_key(0, 0.0);
         let mut fore = bone("fore", Some(BoneId(0)), 60.0);
+        fore.pos.set_key(0, Vec2::new(80.0, 0.0));
         fore.target.set_key(0, 2.0);
         let mut goal = bone("goal", None, 10.0);
-        goal.pos.set_key(0, Vec2::new(140.0, 0.0));
+        goal.pos.set_key(0, Vec2::new(130.0, 0.0));
         let sk = Skeleton { bones: vec![upper, fore, goal], ..Skeleton::default() };
         assert_eq!(sk.skin_matrices(0), vec![Affine::IDENTITY; 3]);
     }
@@ -627,6 +675,7 @@ mod tests {
         let mut upper = bone("upper", None, 80.0);
         upper.angle.set_key(0, 0.0);
         let mut fore = bone("fore", Some(BoneId(0)), 60.0);
+        fore.pos.set_key(0, Vec2::new(80.0, 0.0));
         fore.target.set_key(0, 2.0);
         let mut goal = bone("goal", None, 20.0);
         goal.pos.set_key(0, Vec2::new(100.0, -40.0));
@@ -646,6 +695,7 @@ mod tests {
         let mut upper = bone("upper", None, 50.0);
         upper.angle.set_key(0, 0.0);
         let mut fore = bone("fore", Some(BoneId(0)), 40.0);
+        fore.pos.set_key(0, Vec2::new(50.0, 0.0));
         fore.target.set_key(0, 2.0);
         let mut goal = bone("goal", None, 10.0);
         goal.pos.set_key(0, Vec2::new(1000.0, 0.0));
@@ -661,8 +711,10 @@ mod tests {
         let mut upper = bone("upper", None, 80.0);
         upper.angle.set_key(0, 0.0);
         let mut fore = bone("fore", Some(BoneId(0)), 60.0);
+        fore.pos.set_key(0, Vec2::new(80.0, 0.0));
         fore.target.set_key(0, 2.0);
         let mut hand = bone("hand", Some(BoneId(1)), 20.0);
+        hand.pos.set_key(0, Vec2::new(60.0, 0.0));
         hand.angle.set_key(0, FRAC_PI_2);
         let mut goal = bone("goal", None, 10.0);
         goal.pos.set_key(0, Vec2::new(100.0, -40.0));
@@ -715,15 +767,15 @@ mod tests {
         f_angle.actions.push(Action { name: "bend".into(), pose: f_pose });
         follower.angle = f_angle;
         let sk = Skeleton { bones: vec![dial, follower], ..Skeleton::default() };
-        // Dial at rest: no blend, the follower points along the dial (+x).
+        // Dial at rest: no blend; the follower hangs at the dial's base pointing +x.
         let m0 = sk.matrices(0);
         let t0 = m0[1].apply(Vec2::new(30.0, 0.0));
-        assert!((t0.x - 70.0).abs() < 1e-3 && t0.y.abs() < 1e-3, "follower straight at rest: {t0:?}");
+        assert!((t0.x - 30.0).abs() < 1e-3 && t0.y.abs() < 1e-3, "follower straight at rest: {t0:?}");
         // Dial turned 90° (frame 24): pose frame 12 on the follower's pose (its 90° key):
-        // the follower bends a quarter turn off the (now downward) dial direction.
+        // the follower (still at the dial's base) now points back along −x.
         let m24 = sk.matrices(24);
         let t24 = m24[1].apply(Vec2::new(30.0, 0.0));
-        assert!((t24.x + 30.0).abs() < 1e-3 && (t24.y - 40.0).abs() < 1e-3, "follower bent: {t24:?}");
+        assert!((t24.x + 30.0).abs() < 1e-3 && t24.y.abs() < 1e-3, "follower bent: {t24:?}");
     }
 
     #[test]
