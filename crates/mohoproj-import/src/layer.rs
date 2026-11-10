@@ -119,19 +119,26 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
         "MeshLayer" => {
             count_layer_extras(b, layer);
             let m = get(layer, "mesh").unwrap_or(&Value::Null);
-            finish_leaf(b, l, world, Content::Mesh(m), out);
+            finish_leaf(b, l, world, Content::Mesh(m), parent_bone(layer), out);
         }
         "ImageLayer" => {
             count_layer_extras(b, layer);
-            finish_leaf(b, l, world, Content::Image(layer), out);
+            finish_leaf(b, l, world, Content::Image(layer), parent_bone(layer), out);
         }
         "TextLayer" => {
             count_layer_extras(b, layer);
-            finish_leaf(b, l, world, Content::Text(layer), out);
+            finish_leaf(b, l, world, Content::Text(layer), parent_bone(layer), out);
         }
         "GroupLayer" | "BoneLayer" | "SwitchLayer" => {
-            l.kind = LayerKind::Folder;
-            if ty == "BoneLayer" || ty == "SwitchLayer" {
+            l.kind = if ty == "BoneLayer" { LayerKind::Bone } else { LayerKind::Folder };
+            if ty == "BoneLayer" {
+                // The rig (ADR 0104): bones import now; a layer without bones stays a
+                // plain folder (Moho's Switch skeletons ride in the sidecar for stage 5).
+                l.skeleton = crate::bone::read_skeleton(b, get(layer, "skeleton"));
+                if l.skeleton.is_none() {
+                    l.kind = LayerKind::Folder;
+                }
+            } else if ty == "SwitchLayer" {
                 count_skeleton(b, get(layer, "skeleton"));
             }
             count_layer_extras(b, layer);
@@ -245,13 +252,10 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
         b.report.skip("layer timeline markers");
     }
     if array(get(layer, "actions")).is_some_and(|a| !a.is_empty()) {
-        *b.report.skipped.entry("smart bone actions".into()).or_default() += 1;
+        *b.report.skipped.entry("smart bone action references".into()).or_default() += 1;
     }
     if json::boolean(get(layer, "animated_layer_effects")).unwrap_or(false) {
         b.report.skip("animated layer effects");
-    }
-    if json::integer(get(layer, "parent_bone")).is_some_and(|i| i != -1) {
-        b.report.skip("layers bound to bones");
     }
     if json::integer(get(layer, "timing_offset")).is_some_and(|i| i != 0) {
         b.report.skip("layer timing offsets");
@@ -395,8 +399,10 @@ fn layer_transform(b: &mut Builder, layer: &Value) -> Affine {
     }
 }
 
-/// A leaf layer's content: one keyframe spanning the imported frame range.
-fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, content: Content, out: &mut Vec<FlatLayer>) {
+/// A leaf layer's content: one keyframe spanning the imported frame range. `bind` is the
+/// layer's whole-body bone (Moho's `parent_bone` — how real rigs bind, CharWalk's limbs):
+/// every shape on the layer rides that bone of the enclosing rig (ADR 0104).
+fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, content: Content, bind: Option<anicraft_doc::BoneId>, out: &mut Vec<FlatLayer>) {
     let mut k = Keyframe::new(0, b.duration);
     let mut els: Vec<Arc<Element>> = Vec::new();
     match content {
@@ -404,9 +410,25 @@ fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, content: Content, o
         Content::Image(src) => image_elements(b, src, world, &mut els),
         Content::Text(src) => text::text_elements(b, src, world, &mut els),
     }
+    if let Some(bone) = bind {
+        for el in &mut els {
+            let el = Arc::make_mut(el);
+            if let ElementKind::Shape(shape) = &mut el.kind {
+                shape.bind = vec![(bone, 1.0)];
+            }
+        }
+    }
     k.elements = els;
     l.keyframes = vec![Arc::new(k)];
     out.push(FlatLayer { layer: l });
+}
+
+/// The layer's whole-body bone: Moho's `parent_bone` (`-1` = none).
+fn parent_bone(layer: &Value) -> Option<anicraft_doc::BoneId> {
+    json::integer(get(layer, "parent_bone"))
+        .filter(|i| *i >= 0)
+        .and_then(|i| u32::try_from(i).ok())
+        .map(anicraft_doc::BoneId)
 }
 
 /// An image layer: its file (found in the package or beside the document) becomes a bitmap
@@ -443,7 +465,7 @@ fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<A
         name: String::new(),
         transform: b.to_px.mul(&world),
         color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false }),
+        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new() }),
     }));
 }
 

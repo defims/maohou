@@ -99,22 +99,61 @@ fn switch_imports() {
     }
 }
 
+/// The stage-4 skeleton gate (ADR 0104): bones.moho's five-bone rig imports whole — the
+/// hierarchy, the channels (y-flipped), the lengths in stage pixels, and every key the
+/// model doesn't hold verbatim in the sidecar — with no "skeleton bones" report line.
 #[test]
 fn bones_imports() {
     let Some(path) = fixture("bones") else { return missing_corpus() };
     let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("bones.moho: {e}"));
     assert_eq!(layer_names(&doc), ["Rig", "Layer 1"]);
     let rig = &doc.timeline(0).layers[0];
-    assert_eq!(rig.kind, anicraft_doc::LayerKind::Folder);
-    assert_eq!(report.skipped.get("skeleton bones"), Some(&5), "{:?}", report.skipped);
+    assert_eq!(rig.kind, anicraft_doc::LayerKind::Bone);
+    assert!(!report.skipped.contains_key("skeleton bones"), "{:?}", report.skipped);
+    let sk = rig.skeleton.as_ref().unwrap();
+    assert_eq!(sk.bones.len(), 5);
+    // The hierarchy straight from the file: this fixture's bones are all roots (a Lua-made
+    // rig with no parenting yet), named hips/spine/chest/arm_l/arm_r.
+    assert_eq!(sk.bones.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["hips", "spine", "chest", "arm_l", "arm_r"]);
+    assert!(sk.bones.iter().all(|b| b.parent.is_none()));
+    // chest is the one constrained bone: bounds flip and swap with the y axis
+    // (CCW −0.5236..1.5708 → screen −1.5708..0.5236).
+    let chest = &sk.bones[2];
+    assert!(chest.constraints);
+        let (ccw_half, ccw_sixth) = (std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_6);
+    assert!((chest.min_constraint + ccw_half).abs() < 1e-3 && (chest.max_constraint - ccw_sixth).abs() < 1e-3, "{}..{}", chest.min_constraint, chest.max_constraint);
+    // Lengths convert with the dpi (0.5 in = 160 px); the rest pose angle flips sign.
+    assert!((sk.bones[0].length - 160.0).abs() < 1e-3, "{}", sk.bones[0].length);
+    let angle = sk.bones[0].angle.sample_or(0.0, 0.0);
+    assert!((angle + std::f32::consts::FRAC_PI_2).abs() < 1e-3, "{angle}");
+    // The untouched keys: Moho's remaining Bone keys, captured for the round trip.
+    for key in ["damping_force", "physics_torque", "anim_parent", "ik_lock", "bone_tags"] {
+        assert!(sk.bones[0].extra.contains_key(key), "missing {key} in {:?}", sk.bones[0].extra.keys().collect::<Vec<_>>());
+    }
+    assert_eq!(sk.extra.get("type").and_then(|v| v.as_str()), Some("Skeleton"));
+    // The untouched mesh layer carries no bindings (its mesh is empty anyway).
+    let mesh = &doc.timeline(0).layers[1];
+    assert!(mesh.keyframes[0].elements.iter().all(|el| match &el.kind {
+        anicraft_doc::ElementKind::Shape(s) => s.bind.is_empty(),
+        _ => true,
+    }));
 }
 
+/// smartbones.moho's dial rig: two bones at the root (dial + target), binding mode 1.
 #[test]
 fn smartbones_imports() {
     let Some(path) = fixture("smartbones") else { return missing_corpus() };
     let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("smartbones.moho: {e}"));
     assert_eq!(layer_names(&doc), ["SmartRig", "Layer 1"]);
-    assert_eq!(report.skipped.get("skeleton bones"), Some(&2), "{:?}", report.skipped);
+    let rig = &doc.timeline(0).layers[0];
+    assert_eq!(rig.kind, anicraft_doc::LayerKind::Bone);
+    let sk = rig.skeleton.as_ref().unwrap();
+    assert_eq!(sk.bones.len(), 2);
+    assert_eq!(sk.bones.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), ["dial", "target"]);
+    assert_eq!(sk.binding_mode, 1);
+    // The fixture carries no smart-bone actions (its channels hold single keys), so the
+    // report says nothing about them.
+    assert!(!report.skipped.contains_key("smart bone actions"), "{:?}", report.skipped);
 }
 
 #[test]

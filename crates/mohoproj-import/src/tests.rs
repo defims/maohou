@@ -232,16 +232,25 @@ fn unsupported_things_count_and_degrade() {
         {"type": "MeshLayer", "name": "L", "blend_mode": 2, "physics": {"enabled": true}, "layer_effects": {"blur": channel("Val", vec![0], vec![json!(0.25)])}, "mesh": {"points": [], "curves": [], "shapes": []}}
     ]);
     let (doc, report) = import(&root);
-    assert_eq!(report.skipped.get("skeleton bones"), Some(&1));
+    // Bones import as the rig now (ADR 0104): no "skeleton bones" line any more.
+    assert!(!report.skipped.contains_key("skeleton bones"), "{:?}", report.skipped);
     assert!(report.skipped.contains_key("particle layers"));
     assert!(!report.skipped.contains_key("layer blur"), "blur imports as a layer effect now");
     assert!(report.skipped.contains_key("layer blend modes"));
     // The blur sits on the layer's effect stack (0.25" at 320 px/inch = 80 px).
     let l = doc.timeline(0).layers.iter().find(|l| l.name == "L").unwrap();
     assert_eq!(l.filters, vec![anicraft_doc::Filter::Blur { blur_x: 80.0, blur_y: 80.0, quality: 3 }]);
-    // The bones layer still arrives, as a folder.
+    // The rig layer carries its bone: a bone layer kind, the angle channel y-flipped
+    // (Moho CCW +1.57 → screen clockwise −1.57), the untouched keys in the sidecar.
     let rig = doc.timeline(0).layers.iter().find(|l| l.name == "Rig").unwrap();
-    assert_eq!(rig.kind, anicraft_doc::LayerKind::Folder);
+    assert_eq!(rig.kind, anicraft_doc::LayerKind::Bone);
+    let sk = rig.skeleton.as_ref().unwrap();
+    assert_eq!(sk.bones.len(), 1);
+    assert_eq!(sk.bones[0].name, "hips");
+    assert_eq!(sk.binding_mode, 1);
+    assert!((sk.bones[0].angle.sample_or(24.0, 0.0) + 1.57).abs() < 1e-4, "{:?}", sk.bones[0].angle.sample(24.0));
+    assert_eq!(sk.bones[0].extra.get("type").and_then(|v| v.as_str()), Some("Bone"));
+    assert!(sk.extra.contains_key("bones_groups"));
 }
 
 #[test]
