@@ -106,7 +106,7 @@ pub(crate) fn add_shape(s: &mut Session, name: &str, local: Path, origin: Vec2, 
         name: String::new(),
         transform: Affine::translate(origin.x, origin.y),
         color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(local), fill, stroke, fill_rule: Default::default(), merge }),
+        kind: ElementKind::Shape(Shape { path: Arc::new(local), fill, stroke, fill_rule: Default::default(), merge, bind: Vec::new() }),
     };
     if merge {
         s.selection = crate::merge::merge_in(s, vec![el])?;
@@ -705,6 +705,7 @@ fn place_bitmap(s: &mut Session, p: &Value, bitmap: anicraft_doc::BitmapId) -> R
             stroke: None,
             fill_rule: anicraft_geom::FillRule::NonZero,
             merge: false,
+            bind: Vec::new(),
         }),
     };
     s.editable_keyframe()?.elements.push(Arc::new(el));

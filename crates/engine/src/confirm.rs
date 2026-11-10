@@ -161,7 +161,7 @@ pub fn confirmation(s: &Session, id: &str, p: &Value) -> Option<Confirmation> {
             if l.kind == anicraft_doc::LayerKind::Camera {
                 return camera_removal(s, l);
             }
-            if l.kind == anicraft_doc::LayerKind::Folder {
+            if l.kind.is_container() {
                 // A folder goes with everything in it.
                 let tl = s.doc.timeline(s.scene);
                 let i = tl.layers.iter().position(|x| x.id == l.id)?;

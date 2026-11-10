@@ -397,6 +397,7 @@ fn import_image(s: &mut Session, path: &std::path::Path, bytes: Vec<u8>) -> Resu
         stroke: None,
         fill_rule: anicraft_geom::FillRule::NonZero,
         merge: false,
+        bind: Vec::new(),
     };
     Ok(anicraft_svg::SvgImport::single(w, h, vec![anicraft_svg::ImportedElement { name, transform: anicraft_geom::Affine::IDENTITY, alpha: 1.0, kind: anicraft_doc::ElementKind::Shape(shape) }]))
 }

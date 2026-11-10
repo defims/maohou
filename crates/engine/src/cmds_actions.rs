@@ -70,8 +70,8 @@ pub(crate) fn keyframe_in<'a>(s: &'a mut Session, p: &Value, scope: Scope) -> Re
         (None, Some(_)) => tl.layers.iter().find(|l| l.kind != LayerKind::Folder).map(|l| l.id).ok_or_else(|| EngineError::State("the symbol has no layers".into()))?,
     };
     let layer = tl.layer_mut(lid).ok_or_else(|| EngineError::State(format!("no layer with id {}", lid.0)))?;
-    if layer.kind == LayerKind::Folder || (scope == Scope::Runs && layer.kind == LayerKind::Guide) {
-        return Err(EngineError::State(format!("'{}' is a {} layer: its frames don't run actions", layer.name, if layer.kind == LayerKind::Folder { "folder" } else { "guide" })));
+    if layer.kind.is_container() || (scope == Scope::Runs && layer.kind == LayerKind::Guide) {
+        return Err(EngineError::State(format!("'{}' is a {} layer: its frames don't run actions", layer.name, if layer.kind.is_container() { "folder" } else { "guide" })));
     }
     let i = layer.keyframe_index_at(frame).ok_or_else(|| EngineError::State(format!("frame {} is empty on '{}': add a keyframe first (F6 or F7)", frame + 1, layer.name)))?;
     let k = layer.keyframe_mut(i).ok_or_else(|| EngineError::State("keyframe vanished".into()))?;

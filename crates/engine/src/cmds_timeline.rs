@@ -265,7 +265,7 @@ fn set_layer_type(s: &mut Session, p: &Value) -> Result<Value> {
 fn set_type(s: &mut Session, id: LayerId, ty: &str) -> Result<()> {
     let tl = s.doc.timeline_mut(s.scene);
     let i = tl.layers.iter().position(|l| l.id == id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
-    if tl.layers.get(i).is_some_and(|l| l.kind == LayerKind::Folder) {
+    if tl.layers.get(i).is_some_and(|l| l.kind.is_container()) {
         return Err(EngineError::State("a folder holds layers; it can't become another kind of layer".into()));
     }
     if tl.layers.get(i).is_some_and(|l| l.kind == LayerKind::Camera) {
@@ -304,6 +304,7 @@ fn layer_type_json(s: &Session, id: LayerId) -> Value {
         LayerKind::Mask => "mask",
         LayerKind::Guide => "guide",
         LayerKind::Folder => "folder",
+        LayerKind::Bone => "bone",
         LayerKind::Camera => "camera",
         LayerKind::Normal if masked_by.is_some() => "masked",
         LayerKind::Normal if guided_by.is_some() => "guided",
@@ -334,7 +335,7 @@ pub(crate) fn target_layers(s: &Session, p: &Value) -> Result<Vec<LayerId>> {
     for id in ids {
         let Some(l) = s.doc.timeline(s.scene).layer(id) else { return Err(EngineError::State(format!("no layer with id {}", id.0))) };
         // Folders have no frames: a range across a folder row acts on the layers only.
-        if l.kind == LayerKind::Folder {
+        if l.kind.is_container() {
             folders += 1;
             continue;
         }
@@ -824,9 +825,9 @@ fn delete_layer(s: &mut Session, p: &Value) -> Result<Value> {
     let id = opt_u64(p, "layer")?.map_or(s.layer, LayerId);
     let tl = s.doc.timeline(s.scene);
     let i = tl.layers.iter().position(|l| l.id == id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
-    let is_folder = tl.layers.get(i).is_some_and(|l| l.kind == LayerKind::Folder);
+    let is_folder = tl.layers.get(i).is_some_and(|l| l.kind.is_container());
     let range = if is_folder { tl.group_range(i) } else { i..i + 1 };
-    let drawable_left = tl.layers.iter().enumerate().filter(|(j, l)| !range.contains(j) && !matches!(l.kind, LayerKind::Folder | LayerKind::Camera)).count();
+    let drawable_left = tl.layers.iter().enumerate().filter(|(j, l)| !range.contains(j) && !l.kind.is_container() && !matches!(l.kind, LayerKind::Camera)).count();
     if drawable_left == 0 {
         return Err(EngineError::State("a document needs at least one layer to draw on".into()));
     }
@@ -891,7 +892,7 @@ fn move_layer(s: &mut Session, p: &Value, d: i64) -> Result<Value> {
     let tl = s.doc.timeline_mut(s.scene);
     let i = tl.layers.iter().position(|l| l.id == id).ok_or_else(|| EngineError::State(format!("no layer with id {}", id.0)))?;
     let n = tl.layers.len();
-    if tl.layers.get(i).is_some_and(|l| matches!(l.kind, LayerKind::Mask | LayerKind::Folder)) {
+    if tl.layers.get(i).is_some_and(|l| matches!(l.kind, LayerKind::Mask | LayerKind::Folder | LayerKind::Bone)) {
         // A folder or mask moves with everything in it, past one sibling (with its contents),
         // or out of its folder at either end.
         let block = tl.group_range(i);

@@ -203,7 +203,7 @@ fn set_depth(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let lid = opt_u64(p, "layer")?.map(LayerId);
     let layer = s.layer_mut(lid)?;
-    if matches!(layer.kind, LayerKind::Camera | LayerKind::Folder) {
+    if matches!(layer.kind, LayerKind::Camera | LayerKind::Folder | LayerKind::Bone) {
         return Err(EngineError::State(format!("'{}' has no depth of its own (only layers with artwork do)", layer.name)));
     }
     layer.depth = depth;
