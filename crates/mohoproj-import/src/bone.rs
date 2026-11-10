@@ -82,7 +82,7 @@ pub(crate) fn read_skeleton(b: &mut Builder, skeleton: Option<&Value>) -> Option
         let is_root = bone.parent.is_none();
         anim::read_channel(&mut bone.pos, raw, "anim_pos", &mut b.report, 2, |ch, i| {
             let (x, y, _z) = channel::sample_vec3_at(ch, i).unwrap_or((0.0, 0.0, 0.0));
-            let p = Vec2::new(x as f32, y as f32);
+            let p = Vec2::new(x, y);
             if is_root {
                 to_px.apply(p)
             } else {

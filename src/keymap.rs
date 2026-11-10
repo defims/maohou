@@ -61,6 +61,7 @@ pub fn tool_id(t: Tool) -> &'static str {
         Tool::Eyedropper => "tool.eyedropper",
         Tool::Camera => "tool.camera",
         Tool::Hand => "tool.hand",
+        Tool::Bone => "tool.bone",
         Tool::Zoom => "tool.zoom",
     }
 }

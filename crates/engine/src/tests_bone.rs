@@ -245,3 +245,44 @@ fn bone_commands_refuse_broken_input_without_panicking() {
     run(&mut s, "bone.rig_add", json!({}));
     run(&mut s, "bone.add", json!({"length": 10.0}));
 }
+
+/// 门③ (parity plan › stage 4, ADR 0104): hand-IK interaction. The stage's Bones tool
+/// drags an IK tip by moving the TARGET bone's base through the parent-frame delta (this
+/// is exactly what `bonetool::drag_to` sends) — each tick one `bone.key`, one gesture one
+/// undo step, and the chain follows the cursor.
+#[test]
+fn dragging_the_hand_lands_the_tip_on_the_cursor() {
+    let mut s = blank();
+    let rig = LayerId(rig_with_art(&mut s, "Rig"));
+    run(&mut s, "bone.add", json!({"name": "upper", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
+    run(&mut s, "bone.add", json!({"name": "fore", "length": 40.0, "pos": [60.0, 0.0]}));
+    run(&mut s, "bone.add", json!({"name": "hand", "length": 20.0, "pos": [40.0, 0.0]}));
+    run(&mut s, "bone.add", json!({"name": "goal", "parent": -1, "pos": [200.0, 50.0], "length": 10.0}));
+    run(&mut s, "bone.key", json!({"bone": 2, "channel": "target", "value": 3.0}));
+    let sk_of = |s: &Session| s.doc.timeline(0).layer(rig).unwrap().skeleton.clone().unwrap();
+    // Simulate three drag ticks toward the cursor at (150, 90), exactly what
+    // bonetool::drag_to sends: the ring grab moves the TARGET base by the parent-frame
+    // delta that puts the target TIP on the cursor; the solver pulls the chain with it.
+    let cursor = Vec2::new(150.0, 90.0);
+    for tick in 0..3 {
+        let sk = sk_of(&s);
+        let mats = sk.matrices(0);
+        let goal_tip = mats[3].apply(Vec2::new(10.0, 0.0));
+        let delta = cursor - goal_tip;
+        // The goal is a root: its parent frame is identity, the delta goes straight in.
+        let pos = sk.bones[3].pos.sample_or(0.0, Vec2::ZERO);
+        let next = pos + delta;
+        run(&mut s, "bone.key", json!({"bone": 3, "channel": "pos", "value": [next.x, next.y], "frame": 0}));
+        let fore_tip = sk_of(&s).matrices(0)[1].apply(Vec2::new(40.0, 0.0));
+        println!("tick {tick}: fore tip now {:?} (cursor {cursor:?})", (fore_tip.x, fore_tip.y));
+    }
+    // The chain reached the ring: the hand tip sits on the cursor, lengths held.
+    let sk = sk_of(&s);
+    let mats = sk.matrices(0);
+    let hand_tip = mats[2].apply(Vec2::new(20.0, 0.0));
+    assert!((hand_tip - cursor).length() < 0.5, "hand tip {hand_tip:?} vs cursor {cursor:?}");
+    // One gesture: the three ticks collapse into one undo step.
+    let before = s.doc.clone();
+    run(&mut s, "edit.undo", json!({}));
+    assert_ne!(s.doc, before, "the whole drag was one undo step");
+}

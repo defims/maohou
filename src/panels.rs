@@ -30,6 +30,7 @@ fn tool_icon(tool: Tool) -> Icon {
         Tool::PaintBucket => Icon::Bucket,
         Tool::InkBottle => Icon::Ink,
         Tool::Eyedropper => Icon::Eyedropper,
+        Tool::Bone => Icon::Bone,
         Tool::Camera => Icon::Camera,
         Tool::Hand => Icon::Hand,
         Tool::Zoom => Icon::Zoom,

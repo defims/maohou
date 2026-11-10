@@ -272,7 +272,7 @@ impl Skeleton {
     /// The driver lookups: a smart-bone action named N drives the rig when it rides on an
     /// ANGLE channel whose pose values are invertible (the dial-angle lookup, ADR 0104) —
     /// the corpus serialization (CharWalk, bones-dial) stores it on the dial bone itself.
-    fn drivers(&self) -> Vec<Driver> {
+    fn drivers(&self) -> Vec<Driver<'_>> {
         let mut out: Vec<Driver> = Vec::new();
         for (i, b) in self.bones.iter().enumerate() {
             for a in &b.angle.actions {
@@ -445,15 +445,6 @@ impl Skeleton {
         }
         Some(world)
     }
-}
-
-/// Records an action name's pose-frame span (first occurrence wins).
-fn note_pose_span<T: ChannelValue>(named: &mut Vec<(String, f32, f32)>, name: &str, pose: &Channel<T>) {
-    if named.iter().any(|(n, _, _)| n == name) {
-        return;
-    }
-    let (Some(first), Some(last)) = (pose.keys.first(), pose.keys.last()) else { return };
-    named.push((name.to_string(), first.frame as f32, last.frame as f32));
 }
 
 /// A driver lookup: the action and the dial bone that owns it. The pose values are the
