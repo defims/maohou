@@ -478,7 +478,7 @@ impl<'a> Layout<'a> {
         }
         self.budget -= 1;
         let hi = if st.advancing { st.l0.saturating_add(st.n) } else { st.l0.saturating_add(1) };
-        for layer in tl.layers.iter().filter(|l| !matches!(l.kind, LayerKind::Guide | LayerKind::Folder | LayerKind::Camera)) {
+        for layer in tl.layers.iter().filter(|l| !matches!(l.kind, LayerKind::Guide | LayerKind::Folder | LayerKind::Bone | LayerKind::Camera)) {
             let gain = st.gain * layer.sound_gain();
             let first = layer.keyframes.partition_point(|k| u64::from(k.end()) <= st.l0);
             for k in layer.keyframes.iter().skip(first).take_while(|k| u64::from(k.start) < hi) {

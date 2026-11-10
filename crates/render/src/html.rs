@@ -236,7 +236,7 @@ fn actions(list: &[Action]) -> Value {
 /// Whether timeline layer `index` takes part in playback (what the player walks and draws):
 /// shown, not a folder or guide, not in a hidden folder.
 fn plays(tl: &Timeline, index: usize) -> bool {
-    tl.layers.get(index).is_some_and(|l| l.visible && !matches!(l.kind, LayerKind::Folder | LayerKind::Guide)) && !tl.hidden_by_folder(index)
+    tl.layers.get(index).is_some_and(|l| l.visible && !matches!(l.kind, LayerKind::Folder | LayerKind::Bone | LayerKind::Guide)) && !tl.hidden_by_folder(index)
 }
 
 /// Interning tables and the report, while baking.

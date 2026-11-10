@@ -333,7 +333,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         painter.rect_filled(Rect::from_min_size(left.left_top(), vec2(4.0, ROW_H)), 0.0, to_color32(layer.color));
         // Layers are indented under the folders and masks that hold them. Folders carry a
         // disclosure chevron and a folder glyph; masks a stencil; masked layers its inside.
-        let is_folder = layer.kind == LayerKind::Folder;
+        let is_folder = layer.kind.is_container();
         let masked = layer.parent.is_some_and(|p| tl_now.layer(p).is_some_and(|m| m.kind == LayerKind::Mask));
         let guided = layer.parent.is_some_and(|p| tl_now.layer(p).is_some_and(|m| m.kind == LayerKind::Guide));
         let hidden = !layer.visible || tl_now.hidden_by_folder(i);
@@ -343,7 +343,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let open = !app.tl_collapsed.contains(&layer.id);
         let chevron = Rect::from_center_size(pos2(x0 + 6.0, left.center().y), vec2(TOGGLE, TOGGLE));
         let name_x = match layer.kind {
-            LayerKind::Folder => {
+            LayerKind::Folder | LayerKind::Bone => {
                 icons::paint(&painter, Rect::from_center_size(chevron.center(), vec2(12.0, 12.0)), if open { Icon::ChevronDown } else { Icon::ChevronRight }, T.text_dim);
                 type_icon(x0 + 24.0, if open { Icon::FolderOpen } else { Icon::Folder });
                 x0 + 37.0
@@ -405,6 +405,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         // Screen readers hear the row as a selectable item, "Ball · layer", then its toggles.
         let kind = match layer.kind {
             LayerKind::Folder => "folder",
+            LayerKind::Bone => "bone rig",
             LayerKind::Mask => "mask layer",
             LayerKind::Guide => "guide layer",
             LayerKind::Camera => "camera layer",

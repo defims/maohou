@@ -300,7 +300,7 @@ pub fn hit(doc: &Document, st: &PlayerState, p: Vec2) -> Option<InstancePath> {
 /// Whether timeline layer `index` takes part in playback: shown, not a folder or guide, not in
 /// a hidden folder (what is drawn is what plays).
 fn plays(tl: &Timeline, index: usize) -> bool {
-    tl.layers.get(index).is_some_and(|l| l.visible && !matches!(l.kind, LayerKind::Folder | LayerKind::Guide)) && !tl.hidden_by_folder(index)
+    tl.layers.get(index).is_some_and(|l| l.visible && !matches!(l.kind, LayerKind::Folder | LayerKind::Bone | LayerKind::Guide)) && !tl.hidden_by_folder(index)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -418,7 +418,7 @@ impl<'a, 'h> Run<'a, 'h> {
     /// The sounds on keyframes of `tl` starting at `frame` (every layer but guides, as the
     /// soundtrack has them), at volume `gain` times their layer's.
     fn sounds_at(&mut self, tl: &Timeline, frame: u32, gain: f32) {
-        for layer in tl.layers.iter().filter(|l| !matches!(l.kind, LayerKind::Guide | LayerKind::Folder | LayerKind::Camera)) {
+        for layer in tl.layers.iter().filter(|l| !matches!(l.kind, LayerKind::Guide | LayerKind::Folder | LayerKind::Bone | LayerKind::Camera)) {
             let Some(k) = layer.keyframe_starting_at(frame).and_then(|i| layer.keyframes.get(i)) else { continue };
             if let Some(fs) = &k.sound
                 && self.sounds.len() < MAX_SOUNDS_PER_STEP
