@@ -98,6 +98,8 @@ fn paint_json(p: &Paint) -> Value {
         Paint::Solid(c) => json!(c.to_hex()),
         Paint::Linear { .. } => json!("linear-gradient"),
         Paint::Radial { .. } => json!("radial-gradient"),
+        Paint::Reflected { .. } => json!("reflected-gradient"),
+        Paint::Angle { .. } => json!("angle-gradient"),
         Paint::Bitmap { .. } => json!("bitmap"),
     }
 }

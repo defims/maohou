@@ -253,6 +253,8 @@ pub enum NeedsFull {
     Groups,
     /// Bitmap fills.
     Bitmaps,
+    /// Gradient paints beyond linear and radial (reflected, angle): the CPU draws them.
+    Gradients,
 }
 
 impl std::fmt::Display for NeedsFull {
@@ -261,6 +263,7 @@ impl std::fmt::Display for NeedsFull {
             NeedsFull::Clips => "masks",
             NeedsFull::Groups => "group opacity, blend modes or filters",
             NeedsFull::Bitmaps => "bitmap fills",
+            NeedsFull::Gradients => "reflected and angle gradients",
         })
     }
 }
@@ -290,6 +293,9 @@ pub fn plain_fills(dl: &DisplayList, view: &View) -> Result<(Vec<Fill>, RenderSt
         }
         if !it.guide && it.outline.is_none() && matches!(it.fill, Some(Paint::Bitmap { .. })) {
             return Err(NeedsFull::Bitmaps);
+        }
+        if !it.guide && it.outline.is_none() && matches!(it.fill, Some(Paint::Reflected { .. } | Paint::Angle { .. })) {
+            return Err(NeedsFull::Gradients);
         }
     }
     let surface = IRect { x0: 0, y0: 0, x1: view.width as i32, y1: view.height as i32 };

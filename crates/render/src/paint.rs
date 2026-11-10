@@ -18,6 +18,11 @@ pub enum Shader {
     Solid(Premul),
     Linear { inv: Affine, start: Vec2, dir: Vec2, lut: Box<[Premul; LUT]> },
     Radial { inv: Affine, center: Vec2, inv_radius: f32, lut: Box<[Premul; LUT]> },
+    /// A linear gradient reflected back and forth beyond its ends (Moho's reflected gradient).
+    Reflected { inv: Affine, start: Vec2, dir: Vec2, lut: Box<[Premul; LUT]> },
+    /// One full sweep around a centre, from the local +x axis turning towards +y (Moho's
+    /// angle gradient).
+    Angle { inv: Affine, center: Vec2, lut: Box<[Premul; LUT]> },
     /// Bilinear samples of a bitmap: `inv` maps pixels back to the bitmap's own pixel grid.
     Bitmap { inv: Affine, pixels: Arc<Pixels>, repeat: bool, fx: ColorEffect },
     /// Premultiplied pixels already in surface space (a filtered group): `w` wide, its top-left
@@ -73,6 +78,15 @@ impl Shader {
                 }
                 Shader::Radial { inv, center: *center, inv_radius: 1.0 / radius, lut: build_lut(stops, fx) }
             }
+            (Paint::Reflected { start, end, stops }, Some(inv)) => {
+                let d = *end - *start;
+                let len2 = d.dot(d);
+                if len2 < 1e-12 {
+                    return Shader::Solid(premultiply(fx.apply(stops.first().map_or(Rgba::TRANSPARENT, |s| s.color))));
+                }
+                Shader::Reflected { inv, start: *start, dir: d * (1.0 / len2), lut: build_lut(stops, fx) }
+            }
+            (Paint::Angle { center, stops }, Some(inv)) => Shader::Angle { inv, center: *center, lut: build_lut(stops, fx) },
             (Paint::Bitmap { repeat, matrix, .. }, Some(inv)) => match (image, matrix.inverse()) {
                 // Pixel → shape space → image pixels.
                 (Some(px), Some(to_image)) => Shader::Bitmap { inv: to_image.mul(&inv), pixels: px.clone(), repeat: *repeat, fx: *fx },
@@ -104,6 +118,18 @@ impl Shader {
             Shader::Solid(c) => *c,
             Shader::Linear { inv, start, dir, lut } => lookup(lut, (inv.apply(p) - *start).dot(*dir)),
             Shader::Radial { inv, center, inv_radius, lut } => lookup(lut, (inv.apply(p) - *center).length() * inv_radius),
+            // The reflected coordinate is a triangle wave: back and forth between the ends.
+            Shader::Reflected { inv, start, dir, lut } => {
+                let t = (inv.apply(p) - *start).dot(*dir);
+                let t = if t.is_finite() { t.rem_euclid(2.0) } else { 0.0 };
+                lookup(lut, if t > 1.0 { 2.0 - t } else { t })
+            }
+            // The sweep angle, from the local +x axis towards +y, a full turn per cycle.
+            Shader::Angle { inv, center, lut } => {
+                let q = inv.apply(p) - *center;
+                let t = if q.x.is_finite() && q.y.is_finite() && (q.x != 0.0 || q.y != 0.0) { q.y.atan2(q.x).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU } else { 0.0 };
+                lookup(lut, t)
+            }
             Shader::Bitmap { inv, pixels, repeat, fx } => sample(pixels, inv.apply(p), *repeat, fx),
             Shader::Image { data, x0, y0, w } => {
                 let (dx, dy) = (x - x0, y - y0);
@@ -193,6 +219,29 @@ mod tests {
         // A collapsed image matrix shows nothing rather than dividing by zero.
         let flat = Paint::Bitmap { bitmap: anicraft_doc::BitmapId(1), repeat: true, matrix: Affine { m: [0.0; 6] } };
         assert_eq!(Shader::new(&flat, &Affine::IDENTITY, &ColorEffect::default(), Some(&px)).at(3, 3), [0.0; 4]);
+    }
+
+    #[test]
+    fn reflected_gradients_mirror_and_angle_gradients_sweep() {
+        let stops = vec![GradientStop { offset: 0.0, color: Rgba::BLACK }, GradientStop { offset: 1.0, color: Rgba::WHITE }];
+        // Reflected over 0..100: white at the middle (100), black again at 200.
+        let r = Paint::Reflected { start: Vec2::new(0.0, 0.0), end: Vec2::new(100.0, 0.0), stops: stops.clone() };
+        let s = Shader::new(&r, &Affine::IDENTITY, &ColorEffect::default(), None);
+        assert!(s.at(0, 3)[0] < 0.02, "black at the start");
+        assert!(s.at(99, 3)[0] > 0.98, "white at the end");
+        assert!(s.at(199, 3)[0] < 0.02, "black again one span out: the reflection");
+        assert!(s.at(299, 3)[0] > 0.98, "white two spans out");
+        // Angle sweeps once around the centre: east the first stop, north a quarter way,
+        // west the last.
+        let a = Paint::Angle { center: Vec2::new(0.0, 0.0), stops: stops.clone() };
+        let s = Shader::new(&a, &Affine::IDENTITY, &ColorEffect::default(), None);
+        assert!(s.at(50, 0)[0] < 0.02, "east = the first stop");
+        assert!((s.at(0, 50)[0] - 0.25).abs() < 0.03, "north = a quarter way: {}", s.at(0, 50)[0]);
+        assert!((s.at(-50, 0)[0] - 0.5).abs() < 0.03, "west = half way: {}", s.at(-50, 0)[0]);
+        // A degenerate reflected axis and the exact centre of an angle gradient stay solid.
+        let flat = Paint::Reflected { start: Vec2::ZERO, end: Vec2::ZERO, stops };
+        assert!(Shader::new(&flat, &Affine::IDENTITY, &ColorEffect::default(), None).is_solid().is_some());
+        assert_eq!(Shader::new(&a, &Affine::IDENTITY, &ColorEffect::default(), None).at(0, 0), Shader::new(&a, &Affine::IDENTITY, &ColorEffect::default(), None).at(0, 0));
     }
 
     #[test]

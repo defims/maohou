@@ -214,7 +214,7 @@ pub fn bin(fills: &[Fill], width: u32, height: u32) -> Binned {
                 (RADIAL, [[0.0; 4], [m[0], m[1], m[2], m[3]], [m[4], m[5], center.x, center.y], [0.0, 0.0, *inv_radius, 0.0]])
             }
             // `plain_fills` never hands these over; draw nothing rather than guess.
-            Shader::Bitmap { .. } | Shader::Image { .. } => (SOLID, [[0.0; 4]; 4]),
+            Shader::Bitmap { .. } | Shader::Image { .. } | Shader::Reflected { .. } | Shader::Angle { .. } => (SOLID, [[0.0; 4]; 4]),
         };
         paints.extend_from_slice(&rec);
         let at = ops_at + 4 * op;
