@@ -47,15 +47,15 @@ struct MeshData {
     curves: Vec<Curve>,
 }
 
-/// Builds the shape elements of one mesh. `world` is the layer's accumulated inch-space
-/// transform; `alpha` the accumulated layer alpha.
-pub(crate) fn mesh_elements(b: &mut Builder, mesh: &Value, world: Affine, alpha: f32, out: &mut Vec<Arc<Element>>) {
+/// Builds the shape elements of one mesh. `world` is the layer's own inch-space transform
+/// (ancestors live on their folder layers since stage 3).
+pub(crate) fn mesh_elements(b: &mut Builder, mesh: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {
     let Some(data) = parse_mesh(b, mesh) else { return };
     report_point_features(b, mesh);
     let Some(shapes) = array(get(mesh, "shapes")) else { return };
     let transform = b.to_px.mul(&world);
     for shape in shapes.iter().take(MAX_SHAPES) {
-        shape_element(b, shape, &data, transform, alpha, out);
+        shape_element(b, shape, &data, transform, out);
     }
     if shapes.len() > MAX_SHAPES {
         b.report.skip("meshes past 20,000 shapes");
@@ -136,7 +136,7 @@ fn report_point_features(b: &mut Builder, mesh: &Value) {
 
 /// One shape: its outline plus fill/stroke, as one fill-only and one stroke-only element
 /// (AniCraft draws them separately, as the XFL importer does).
-fn shape_element(b: &mut Builder, shape: &Value, data: &MeshData, transform: Affine, alpha: f32, out: &mut Vec<Arc<Element>>) {
+fn shape_element(b: &mut Builder, shape: &Value, data: &MeshData, transform: Affine, out: &mut Vec<Arc<Element>>) {
     let has_fill = json::boolean(get(shape, "has_fill")).unwrap_or(false);
     let has_outline = json::boolean(get(shape, "has_outline")).unwrap_or(false);
     if !has_fill && !has_outline {
@@ -148,7 +148,7 @@ fn shape_element(b: &mut Builder, shape: &Value, data: &MeshData, transform: Aff
     }
     let (fill, stroke) = shape_paint(b, shape, &path, has_fill, has_outline);
     shape_flags(b, shape);
-    let fx = ColorEffect { alpha: alpha.clamp(0.0, 1.0), ..ColorEffect::default() };
+    let fx = ColorEffect::default();
     if let Some(p) = fill {
         out.push(Arc::new(Element {
             id: ElementId(b.doc.alloc_id()),
@@ -281,20 +281,19 @@ fn shape_paint(b: &mut Builder, shape: &Value, path: &Path, has_fill: bool, has_
     let fill = if has_fill {
         let gradient = get(style, "fill_style").filter(|_| json::integer(get(style, "fill_style_id")) == Some(9));
         match gradient {
-            Some(g) if matches!(json::integer(get(g, "gradient_type")), Some(0) | Some(1)) => {
-                gradient_paint(b, g, path).or_else(|| {
-                    b.report.skip("unreadable gradient fills (drawn solid)");
-                    solid_fill(style, frame)
-                })
-            }
-            // Reflected and angle gradients have no paint variant yet: the nearest
-            // supported stand-in is the style's solid colour, counted.
-            Some(g) => {
-                b.report.skip("reflected and angle gradient fills");
-                let _ = g;
+            Some(g) => gradient_paint(b, g, shape, path).or_else(|| {
+                b.report.skip("unreadable gradient fills (drawn solid)");
+                solid_fill(style, frame)
+            }),
+            None => {
+                // Moho's fill-effect transform belongs to gradient fills; on a solid fill it
+                // has nothing to act on, and the report says so when it carries values.
+                let (off, rot, scale) = effect_transform(shape, b.frame);
+                if off != Vec2::ZERO || rot.abs() > 1e-6 || (scale - 1.0).abs() > 1e-6 {
+                    b.report.skip("shape effect transforms on non-gradient fills");
+                }
                 solid_fill(style, frame)
             }
-            None => solid_fill(style, frame),
         }
     } else {
         None
@@ -314,20 +313,37 @@ fn solid_fill(style: &Value, frame: f64) -> Option<Paint> {
     Some(Paint::Solid(c))
 }
 
-/// A linear (0) or radial (1) `SS_Gradient2` fill: stops from `{location, color}` channel
-/// pairs. Moho keeps the gradient's geometry elsewhere (its home is unverified), so the
-/// gradients are oriented from the shape's bounds — counted here, and exact once that home
-/// is known. (Reflected 2 / angle 3 are rejected by the caller.)
-fn gradient_paint(b: &mut Builder, g: &Value, path: &Path) -> Option<Paint> {
+/// The shape's fill-effect transform at `frame`: the offset in inches, the rotation in
+/// radians, the scale (Moho's `effect_offset`/`effect_rotation`/`effect_scale` channels —
+/// the gradient handles an artist drags in Moho land here).
+fn effect_transform(shape: &Value, frame: f64) -> (Vec2, f32, f32) {
+    let ch = |k: &str| get(shape, k).and_then(Channel::parse);
+    let off = ch("effect_offset").and_then(|c| channel::sample_vec2(&c, frame)).unwrap_or(Vec2::ZERO);
+    let rot = ch("effect_rotation").and_then(|c| channel::sample_f64(&c, frame)).unwrap_or(0.0) as f32;
+    let scale = ch("effect_scale").and_then(|c| channel::sample_f64(&c, frame)).unwrap_or(1.0) as f32;
+    let finite = |v: f32, d: f32| if v.is_finite() { v } else { d };
+    (Vec2::new(finite(off.x, 0.0), finite(off.y, 0.0)), finite(rot, 0.0), finite(scale, 1.0).max(1e-4))
+}
+
+/// An `SS_Gradient2` fill: stops from `{location, color}` channel pairs, laid out across the
+/// shape's bounds and placed by the shape's fill-effect transform (`gradient_type` 0 linear,
+/// 1 radial, 2 reflected, 3 angle — the corpus's four values). With `through_alpha` false
+/// Moho ignores the stops' alpha and draws opaque.
+fn gradient_paint(b: &mut Builder, g: &Value, shape: &Value, path: &Path) -> Option<Paint> {
     let kind = json::integer(get(g, "gradient_type")).unwrap_or(0);
     let marks = array(get(g, "gradients"))?;
     let frame = b.frame;
+    let through_alpha = json::boolean(get(g, "through_alpha")).unwrap_or(false);
+    if marks.len() > MAX_STOPS {
+        b.report.skip("gradient stops past 64");
+    }
     let mut stops: Vec<GradientStop> = marks
         .iter()
         .take(MAX_STOPS)
         .filter_map(|m| {
             let o = get(m, "location").and_then(Channel::parse).and_then(|c| channel::sample_f64(&c, frame))?;
             let c = get(m, "color").and_then(Channel::parse).and_then(|c| channel::sample_color01(&c, frame))?;
+            let c = if through_alpha { c } else { c.with_alpha(1.0) };
             Some(GradientStop { offset: (o as f32).clamp(0.0, 1.0), color: c })
         })
         .collect();
@@ -335,32 +351,34 @@ fn gradient_paint(b: &mut Builder, g: &Value, path: &Path) -> Option<Paint> {
         return None;
     }
     stops.sort_by(|a, s| a.offset.total_cmp(&s.offset));
-    b.report.skip("gradient geometry (approximated from shape bounds)");
+    // The geometry: a canonical layout over the shape's bounds, rotated, scaled and shifted
+    // by the fill-effect transform.
     let bounds = path.bounds();
     let centre = Vec2::new((bounds.min.x + bounds.max.x) * 0.5, (bounds.min.y + bounds.max.y) * 0.5);
-    if kind == 0 {
-        Some(Paint::Linear { start: Vec2::new(bounds.min.x, centre.y), end: Vec2::new(bounds.max.x, centre.y), stops })
-    } else {
-        let r = (bounds.max.x - bounds.min.x).hypot(bounds.max.y - bounds.min.y) * 0.5;
-        Some(Paint::Radial { center: centre, radius: r.max(1e-4), stops })
+    let (off, rot, scale) = effect_transform(shape, frame);
+    let (sin, cos) = rot.sin_cos();
+    let place = |p: Vec2| {
+        let q = (p - centre) * scale;
+        Vec2::new(q.x * cos - q.y * sin, q.x * sin + q.y * cos) + centre + off
+    };
+    let radius = (bounds.max.x - bounds.min.x).hypot(bounds.max.y - bounds.min.y) * 0.5 * scale;
+    match kind {
+        0 => Some(Paint::Linear { start: place(Vec2::new(bounds.min.x, centre.y)), end: place(Vec2::new(bounds.max.x, centre.y)), stops }),
+        1 => Some(Paint::Radial { center: place(centre), radius: radius.max(1e-4), stops }),
+        2 => Some(Paint::Reflected { start: place(Vec2::new(bounds.min.x, centre.y)), end: place(Vec2::new(bounds.max.x, centre.y)), stops }),
+        3 => Some(Paint::Angle { center: place(centre), stops }),
+        other => {
+            b.report.skip(&format!("gradient type {other} fills (drawn solid)"));
+            None
+        }
     }
 }
 
 /// Per-shape features stage 1 draws at rest (or not at all), counted when non-default.
 /// (`3d_thickness` is not counted: Moho writes its default 0.125 on every shape, and it only
-/// renders under a layer `3d_mode`, which is counted at the layer.)
+/// renders under a layer `3d_mode`, which is counted at the layer. The fill-effect
+/// transform belongs to gradient fills and is applied there.)
 fn shape_flags(b: &mut Builder, shape: &Value) {
-    let frame = b.frame;
-    let ch = |k: &str| get(shape, k).and_then(Channel::parse);
-    if ch("effect_offset").and_then(|c| channel::sample_vec2(&c, frame)).is_some_and(|v| v.length() > 1e-6) {
-        b.report.skip("shape effect offsets (drawn at rest)");
-    }
-    if ch("effect_scale").and_then(|c| channel::sample_f64(&c, frame)).is_some_and(|v| (v - 1.0).abs() > 1e-6) {
-        b.report.skip("shape effect scales (drawn at rest)");
-    }
-    if ch("effect_rotation").and_then(|c| channel::sample_f64(&c, frame)).is_some_and(|v| v.abs() > 1e-6) {
-        b.report.skip("shape effect rotations (drawn at rest)");
-    }
     if json::integer(get(shape, "combo_mode")).is_some_and(|v| v != 0) {
         b.report.skip("shape combo modes");
     }

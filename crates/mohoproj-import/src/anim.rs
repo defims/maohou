@@ -182,6 +182,26 @@ impl LayerTransform {
             || self.flip_h.is_animated()
             || self.flip_v.is_animated()
     }
+    /// Whether any channel holds a key at all (a static transform is one key per channel).
+    pub fn has_values(&self) -> bool {
+        !self.translation.keys.is_empty()
+            || !self.scale.keys.is_empty()
+            || !self.rotation.keys.is_empty()
+            || !self.shear.keys.is_empty()
+            || !self.flip_h.keys.is_empty()
+            || !self.flip_v.keys.is_empty()
+    }
+    /// Whether every key says the defaults — Moho writes static keys on every layer, and an
+    /// identity transform is no transform.
+    pub fn is_neutral(&self) -> bool {
+        let near = |c: &anicraft_doc::Channel<Vec2>, d: Vec2| c.keys.first().is_none_or(|k| (k.val - d).length() < 1e-6);
+        near(&self.translation, Vec2::ZERO)
+            && near(&self.scale, Vec2::new(1.0, 1.0))
+            && self.rotation.keys.first().is_none_or(|k| k.val.abs() < 1e-6)
+            && near(&self.shear, Vec2::ZERO)
+            && self.flip_h.keys.first().is_none_or(|k| !k.val)
+            && self.flip_v.keys.first().is_none_or(|k| !k.val)
+    }
 }
 
 /// Reads a layer's `transforms` object into stage-space channels. Reports the 3D parts

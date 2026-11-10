@@ -123,15 +123,21 @@ fn gradients_imports() {
     let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("gradients.moho: {e}"));
     assert_eq!(layer_names(&doc), ["Layer 1"]);
     let els = &doc.timeline(0).layers[0].keyframes[0].elements;
-    // 17 shapes, each with an outline and 13 of them gradient-filled (4 radial mapped; 4
-    // reflected + 5 angle reported): 13 fill elements + 17 stroke elements.
+    // 17 shapes, each with an outline and 13 of them gradient-filled: S4-S7 reflected,
+    // S8+S10-S12 radial, S13-S17 angle (S1-S3 and S9 carry gradient definitions but no
+    // fill). 13 fill elements + 17 stroke elements.
     assert_eq!(els.len(), 30, "13 fills + 17 strokes");
-    let reflected_angle = *report.skipped.get("reflected and angle gradient fills").unwrap_or(&0);
-    assert_eq!(reflected_angle, 9, "{:?}", report.skipped);
-    let approximated = *report.skipped.get("gradient geometry (approximated from shape bounds)").unwrap_or(&0);
-    assert_eq!(approximated, 4, "the four radial gradients");
-    let radials = els.iter().filter(|el| matches!(&el.kind, anicraft_doc::ElementKind::Shape(s) if matches!(s.fill, Some(anicraft_doc::Paint::Radial { .. })))).count();
-    assert_eq!(radials, 4);
+    let count = |p: fn(&anicraft_doc::Paint) -> bool| els.iter().filter(|el| matches!(&el.kind, anicraft_doc::ElementKind::Shape(s) if s.fill.as_ref().is_some_and(p))).count();
+    assert_eq!(count(|f| matches!(f, anicraft_doc::Paint::Radial { .. })), 4);
+    assert_eq!(count(|f| matches!(f, anicraft_doc::Paint::Reflected { .. })), 4);
+    assert_eq!(count(|f| matches!(f, anicraft_doc::Paint::Angle { .. })), 5);
+    assert_eq!(count(|f| matches!(f, anicraft_doc::Paint::Linear { .. })), 0, "the linear shapes carry no fill");
+    // All four gradient enums import without approximation now. The one remaining report
+    // is the fixture's variable-width point (a per-point feature of a later milestone).
+    assert_eq!(report.skipped, [(("variable point widths (drawn uniform)".to_string()), 1)].into_iter().collect(), "{:?}", report.skipped);
+    // The named style table comes across (Moho's 12 built-ins define nothing but names).
+    assert_eq!(doc.styles.len(), 12);
+    assert_eq!(doc.styles[0].name, "Wet Ink");
 }
 
 #[test]
