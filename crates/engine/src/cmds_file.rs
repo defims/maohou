@@ -39,6 +39,15 @@ pub fn specs() -> Vec<CommandSpec> {
         },
         CommandSpec { id: "file.export_svg", label: "Export Frame as SVG…", menu: "File/Export", shortcut: None, params: "{path, frame? (in the current scene), confirm?}", mutates: false, run: export_svg },
         CommandSpec {
+            id: "file.export_moho",
+            label: "Export Moho Package…",
+            menu: "File/Export",
+            shortcut: None,
+            params: "{path (.moho, a zip package with a preview image; or .mohoproj, the bare project JSON), preview? (the frame the preview shows; default the playhead), scale?, confirm?}",
+            mutates: false,
+            run: export_moho,
+        },
+        CommandSpec {
             id: "file.export_video",
             label: "Export Video…",
             menu: "File/Export",
@@ -509,6 +518,63 @@ fn export_sprite_sheet(s: &mut Session, p: &Value) -> Result<Value> {
     crate::vfs::write(&path, &png)?;
     crate::vfs::write(&json_path, text)?;
     Ok(json!({"written": path.display().to_string(), "map": json_path.display().to_string(), "frames": n, "columns": cols, "rows": rows, "width": sheet_w, "height": sheet_h}))
+}
+
+/// Export Moho Package: the document as a Moho-openable `.moho` zip (`Project.mohoproj` beside
+/// a JPEG preview of the frame; ADR 0107), or a bare `.mohoproj` with the preview embedded as
+/// its `thumbnail`. An imported document exports its untouched source keys from the sidecar
+/// with the model's current state over them; a native one generates the canonical form.
+fn export_moho(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = PathBuf::from(str_req(p, "path")?);
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    let bare = match ext.as_deref() {
+        Some("moho") => false,
+        Some("mohoproj") => true,
+        _ => return Err(EngineError::Param("the Moho package goes to .moho (a zip) or .mohoproj (the bare JSON)".into())),
+    };
+    // The preview: the frame drawn small (Moho's own previews cap at 512 px).
+    let last = s.doc.frame_count().saturating_sub(1);
+    let frame = opt_u32(p, "preview")?.unwrap_or(s.frame).min(last);
+    let view = View::stage(&s.doc, scale_param(p)?);
+    let (pm, _stats) = render(&anicraft_doc::evaluate(&s.doc, frame), &view)?;
+    let (mut w, mut h) = (view.width, view.height);
+    let cap = 512.0f32;
+    let scale = (cap / w as f32).min(cap / h as f32).min(1.0);
+    let rgba = if scale < 1.0 {
+        w = ((w as f32 * scale).round() as u32).max(1);
+        h = ((h as f32 * scale).round() as u32).max(1);
+        image_scale(&pm.to_rgba8(), view.width, view.height, w, h)
+    } else {
+        pm.to_rgba8()
+    };
+    let preview = anicraft_media::jpeg::encode(&rgba, w, h, 85);
+    let (project, report) = anicraft_mohoproj_import::export::project_json(&s.doc);
+    let bytes = if bare {
+        let mut root = project;
+        if let Some(obj) = root.as_object_mut() {
+            obj.insert("thumbnail".into(), json!(anicraft_doc::base64_encode(&preview)));
+        }
+        serde_json::to_vec(&root).map_err(|e| EngineError::Format(e.to_string()))?
+    } else {
+        anicraft_mohoproj_import::export::package_bytes(&s.doc, Some(&preview)).map_err(|e| EngineError::State(e.to_string()))?
+    };
+    crate::vfs::write(&path, &bytes)?;
+    Ok(json!({"written": path.display().to_string(), "bytes": bytes.len(), "frame": frame, "preview": format!("{w}x{h}"), "report": report.summary(), "skipped": report.skipped}))
+}
+
+/// Nearest-neighbour resample of an RGBA frame (the preview's small draw).
+fn image_scale(rgba: &[u8], from_w: u32, from_h: u32, to_w: u32, to_h: u32) -> Vec<u8> {
+    let mut out = vec![0u8; to_w as usize * to_h as usize * 4];
+    for y in 0..to_h {
+        let sy = (u64::from(y) * u64::from(from_h) / u64::from(to_h)) as usize;
+        for x in 0..to_w {
+            let sx = (u64::from(x) * u64::from(from_w) / u64::from(to_w)) as usize;
+            let src = (sy * from_w as usize + sx) * 4;
+            let dst = (y as usize * to_w as usize + x as usize) * 4;
+            out[dst..dst + 4].copy_from_slice(rgba.get(src..src + 4).unwrap_or(&[0; 4]));
+        }
+    }
+    out
 }
 
 /// Export Video: movie frames rendered in parallel batches and encoded by AniCraft's own VP9

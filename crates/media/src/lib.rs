@@ -24,6 +24,7 @@
 
 pub mod deflate;
 pub mod feed;
+pub mod jpeg;
 pub mod mp4;
 pub mod opusenc;
 pub mod vp9enc;

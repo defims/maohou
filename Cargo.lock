@@ -325,6 +325,7 @@ name = "anicraft-media"
 version = "0.1.0"
 dependencies = [
  "miniz_oxide 0.8.9",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -333,6 +334,7 @@ version = "0.1.0"
 dependencies = [
  "anicraft-doc",
  "anicraft-geom",
+ "anicraft-media",
  "anicraft-text",
  "miniz_oxide 0.8.9",
  "png 0.17.16",

@@ -405,7 +405,7 @@ pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font:
         }
     }
     if crate::i18n::wants_cjk()
-        && let Some((name, bytes, index)) = crate::platform::cjk_fallback_font()
+        && let Some((_name, bytes, index)) = crate::platform::cjk_fallback_font()
     {
         let mut data = FontData::from_owned(bytes);
         data.index = index;

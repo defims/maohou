@@ -12,6 +12,8 @@ repository.workspace = true
 [dev-dependencies]
 # Inflates what our deflate writes, in tests (the importers' zip readers are higher layers).
 miniz_oxide = "0.8"
+# Decodes what our JPEG encoder writes, in tests (already in the tree through the doc crate).
+zune-jpeg.workspace = true
 
 [lints]
 workspace = true
