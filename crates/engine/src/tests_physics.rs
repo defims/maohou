@@ -69,7 +69,7 @@ fn baking_keys_the_fall_and_undo_restores() {
     assert!((last - 150.0).abs() < 1.5, "resting on the floor: {last}");
     assert!(y(3) < last && y(3) > 50.0, "partway down at frame 3: {}", y(3));
     // Undo restores the unbaked channels.
-    s.undo();
+    s.undo().unwrap();
     let l = s.doc.timeline(0).layer(s.doc.timeline(0).layers[0].id).unwrap();
     assert!(l.translation.keys.is_empty(), "the bake undid");
     let info = run(&mut s, "physics.info", json!({}));

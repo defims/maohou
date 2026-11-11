@@ -30,6 +30,15 @@ const MAX_OUTLINE: usize = 256;
 /// Most triangles one image layer may produce.
 const MAX_TRIANGLES: usize = 2_048;
 
+/// The picture on the layer: the bitmap and the geometry that places it (pixel size, drawn
+/// size in inches, the centre in layer space).
+struct Picture {
+    id: anicraft_doc::BitmapId,
+    pixels: (f32, f32),
+    drawn: (f32, f32),
+    centre: Vec2,
+}
+
 /// An image layer's elements: the mesh warp when the layer has one, else the plain picture.
 pub(crate) fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {
     let Some(file) = crate::layer::fileref(layer) else {
@@ -59,14 +68,18 @@ pub(crate) fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out:
         centre = centre + t;
     }
     deformer_flags(b, layer);
+    let picture = Picture { id, pixels: (bw, bh), drawn: (w, h), centre };
     match get(layer, "mesh").filter(|m| !m.is_null()) {
-        Some(mesh) => warp_elements(b, mesh, id, (bw, bh), w, h, centre, world, out),
-        None => plain_picture(b, id, (bw, bh), w, h, centre, world, out),
+        Some(mesh) => warp_elements(b, mesh, picture, world, out),
+        None => plain_picture(b, picture, world, out),
     }
 }
 
 /// The plain picture: one bitmap rectangle of the drawn size about the centre.
-fn plain_picture(b: &mut Builder, id: anicraft_doc::BitmapId, (bw, bh): (f32, f32), w: f32, h: f32, centre: Vec2, world: Affine, out: &mut Vec<Arc<Element>>) {
+fn plain_picture(b: &mut Builder, pic: Picture, world: Affine, out: &mut Vec<Arc<Element>>) {
+    let (bw, bh) = pic.pixels;
+    let (w, h) = pic.drawn;
+    let centre = pic.centre;
     let mut path = Path::new();
     path.move_to(about(centre, -w * 0.5, -h * 0.5))
         .line_to(about(centre, w * 0.5, -h * 0.5))
@@ -80,7 +93,7 @@ fn plain_picture(b: &mut Builder, id: anicraft_doc::BitmapId, (bw, bh): (f32, f3
         color: ColorEffect::default(),
         kind: ElementKind::Shape(Shape {
             path: Arc::new(path),
-            fill: Some(Paint::Bitmap { bitmap: id, repeat: false, matrix: rect_matrix(bw, bh, w, h, centre) }),
+            fill: Some(Paint::Bitmap { bitmap: pic.id, repeat: false, matrix: rect_matrix(bw, bh, w, h, centre) }),
             stroke: None,
             fill_rule: FillRule::NonZero,
             merge: false,
@@ -132,9 +145,13 @@ fn rect_matrix(bw: f32, bh: f32, w: f32, h: f32, centre: Vec2) -> Affine {
     Affine { m: [sx, 0.0, 0.0, sy, centre.x - w * 0.5, centre.y + h * 0.5] }
 }
 
-/// The mesh warp: the layer's mesh shapes become textured triangles. `centre`, `w`, `h`
-/// place the image in layer space; `(bw, bh)` is the image's pixel size.
-fn warp_elements(b: &mut Builder, mesh: &Value, id: anicraft_doc::BitmapId, (bw, bh): (f32, f32), w: f32, h: f32, centre: Vec2, world: Affine, out: &mut Vec<Arc<Element>>) {
+/// The mesh warp: the layer's mesh shapes become textured triangles laid out by the
+/// picture's geometry.
+fn warp_elements(b: &mut Builder, mesh: &Value, pic: Picture, world: Affine, out: &mut Vec<Arc<Element>>) {
+    let (bw, bh) = pic.pixels;
+    let (w, h) = pic.drawn;
+    let centre = pic.centre;
+    let id = pic.id;
     let Some(data) = parse_mesh(b, mesh) else { return };
     let Some(shapes) = array(get(mesh, "shapes")) else {
         b.report.skip("image meshes without shapes (drawn as the plain picture)");

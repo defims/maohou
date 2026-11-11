@@ -231,7 +231,7 @@ pub fn bake(doc: &Document, scene_index: usize) -> Result<Baked, PhysicsError> {
         return Err(PhysicsError::NoBodies);
     }
     let (start, end) = scene.frame_range();
-    let frames = end.saturating_sub(start).min(MAX_BAKE_FRAMES).max(1);
+    let frames = end.saturating_sub(start).clamp(1, MAX_BAKE_FRAMES);
     let dt = (1.0 / doc.stage.fps.max(1.0)) as f64;
     let gravity = world.gravity;
     let wind = world.wind;

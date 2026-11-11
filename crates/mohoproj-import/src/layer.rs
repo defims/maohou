@@ -275,7 +275,7 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
 /// slice and are counted when they carry values; the group's world (its `enable_physics`,
 /// `gravity`, `wind`) collects on the builder.
 fn read_physics_body(b: &mut Builder, layer: &Value) -> Option<anicraft_doc::PhysicsBody> {
-    let Some(ph) = get(layer, "physics") else { return None };
+    let ph = get(layer, "physics")?;
     let frame = b.frame;
     let on = json::boolean(get(ph, "enabled")).unwrap_or(false);
     if !on {
@@ -302,7 +302,7 @@ fn read_physics_body(b: &mut Builder, layer: &Value) -> Option<anicraft_doc::Phy
         static_body: json::boolean(get(ph, "static")).unwrap_or(false),
         friction: num("friction", 0.3).clamp(0.0, 1.0) as f32,
         restitution: num("restitution", 0.5).clamp(0.0, 1.0) as f32,
-        velocity: anicraft_geom::Vec2::new((velocity.x * b.dpi) as f32, (-velocity.y * b.dpi) as f32),
+        velocity: anicraft_geom::Vec2::new(velocity.x * b.dpi, -velocity.y * b.dpi),
     })
 }
 
@@ -319,7 +319,7 @@ fn collect_world(b: &mut Builder, layer: &Value) {
         return;
     }
     let conv = |v: Option<anicraft_geom::Vec2>| -> Option<anicraft_geom::Vec2> {
-        v.map(|g| anicraft_geom::Vec2::new((g.x * b.dpi) as f32, (-g.y * b.dpi) as f32))
+        v.map(|g| anicraft_geom::Vec2::new(g.x * b.dpi, -g.y * b.dpi))
     };
     let gravity = conv(get(layer, "gravity").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::new(0.0, 10.0 * b.dpi));
     let wind = conv(get(layer, "wind").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::ZERO);

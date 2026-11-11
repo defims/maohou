@@ -105,37 +105,37 @@ fn solve3(m: &[f64; 9], b: &[f64; 3]) -> Option<[f64; 3]> {
     for col in 0..3 {
         // Pivot: the row at or below `col` with the largest |value| in this column.
         let (mut best, mut big) = (0.0f64, col);
-        for r in col..3 {
-            let v = a[r][col].abs();
+        for (r, row) in a.iter().enumerate().skip(col) {
+            let v = row[col].abs();
             if v > best {
                 best = v;
                 big = r;
             }
         }
-        if !(best > 1e-12) {
+        if best <= 1e-12 {
             return None;
         }
         a.swap(col, big);
         let d = a[col][col];
-        for r in col + 1..3 {
-            let f = a[r][col] / d;
-            for c in col..4 {
-                a[r][c] -= f * a[col][c];
+        let pivot = a[col];
+        for row in a.iter_mut().skip(col + 1) {
+            let f = row[col] / d;
+            for (c, value) in row.iter_mut().enumerate().skip(col) {
+                *value -= f * pivot[c];
             }
         }
     }
     // Back-substitution (the matrix is now upper triangular).
     let mut out = [0.0; 3];
     for r in (0..3).rev() {
-        let d = a[r][r];
-        if !(d.abs() > 1e-12) {
+        if a[r][r].abs() <= 1e-12 {
             return None;
         }
         let mut s = a[r][3];
-        for c in r + 1..3 {
-            s -= a[r][c] * out[c];
+        for (c, o) in out.iter().enumerate().skip(r + 1) {
+            s -= a[r][c] * o;
         }
-        out[r] = s / d;
+        out[r] = s / a[r][r];
     }
     Some(out)
 }

@@ -537,7 +537,7 @@ fn moho_imports_round_trip_through_the_native_format() {
 /// and world, and a keyframe sound come back structurally equal through save/load.
 #[test]
 fn media_and_simulation_round_trip_through_the_native_format() {
-    use anicraft_doc::{Bitmap, BitmapId, Element, ElementId, ElementKind, FrameSound, PhysicsBody, PhysicsWorld, PointTrack, Scene, Shape, Sound, SoundId, SoundSync, TextureMap};
+    use anicraft_doc::{Bitmap, BitmapId, Element, ElementId, ElementKind, FrameSound, PhysicsBody, PhysicsWorld, PointTrack, Shape, Sound, SoundId, SoundSync, TextureMap};
     let mut png = Vec::new();
     {
         let mut enc = png::Encoder::new(&mut png, 2, 1);

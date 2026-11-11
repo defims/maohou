@@ -948,6 +948,7 @@ mod tests_bone;
 mod tests_rig;
 #[cfg(test)]
 mod tests_physics;
+#[cfg(test)]
 mod tests_switch;
 #[cfg(test)]
 mod tests_camera;
