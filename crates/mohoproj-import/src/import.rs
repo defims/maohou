@@ -333,13 +333,25 @@ pub fn import_path(path: &std::path::Path) -> Result<(Document, Report), MohoErr
         }
         let data = std::fs::read(path)?;
         let archive = Archive::open(&data)?;
+        let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
         let read = |p: &str| -> Result<Option<Vec<u8>>, MohoError> {
             // Zip entry names may carry either slash; try the given name, then the other one.
             if let Some(b) = archive.read(p)? {
                 return Ok(Some(b));
             }
             let swapped = if p.contains('\\') { p.replace('\\', "/") } else { p.replace('/', "\\") };
-            Ok(archive.read(&swapped)?)
+            if let Some(b) = archive.read(&swapped)? {
+                return Ok(Some(b));
+            }
+            // `relativeTo: "Project"`: media beside the package file (the audio fixture's
+            // `media/bounce.wav` sits in the project folder, not inside the zip).
+            let beside = !p.split('/').any(|c| c == ".." || c.is_empty()) && !p.contains(':');
+            if beside
+                && let Ok(b) = std::fs::read(dir.join(p))
+            {
+                return Ok(Some(b));
+            }
+            Ok(None)
         };
         return import_with(&read);
     }

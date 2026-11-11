@@ -524,7 +524,7 @@ fn moho_imports_round_trip_through_the_native_format() {
         eprintln!("skipped: no maop-corpus at MAOHOU_FIXTURES or ../../maop-corpus");
         return;
     }
-    for name in ["empty", "keyframes", "text", "switch"] {
+    for name in ["empty", "keyframes", "text", "switch", "physics-drop", "image-warp", "audio-track"] {
         let path = dir.join(format!("{name}.moho"));
         let (doc, _) = anicraft_mohoproj_import::import_path(&path).unwrap_or_else(|e| panic!("{name}.moho: {e}"));
         let back = format::from_json(&format::to_json(&doc).unwrap()).unwrap_or_else(|e| panic!("{name}.moho round trip: {e}"));

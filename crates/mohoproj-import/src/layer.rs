@@ -310,20 +310,45 @@ fn read_physics_body(b: &mut Builder, layer: &Value) -> Option<anicraft_doc::Phy
 /// `gravity`/`wind`, inches/s² y-up): the first one becomes the scene's world, later ones
 /// are counted. Gravity's default in the corpus is (0, −10) — down, stage pixels +y.
 fn collect_world(b: &mut Builder, layer: &Value) {
-    if json::string(get(layer, "type")).as_deref() != Some("GroupLayer") {
-        return;
-    }
     let frame = b.frame;
-    let on = get(layer, "enable_physics").and_then(Channel::parse).is_some_and(|c| channel::sample_bool(&c, frame).unwrap_or(false));
-    if !on {
-        return;
-    }
-    let conv = |v: Option<anicraft_geom::Vec2>| -> Option<anicraft_geom::Vec2> {
-        v.map(|g| anicraft_geom::Vec2::new(g.x * b.dpi, -g.y * b.dpi))
+    // Two real-world forms (ADR 0106):
+    // • the GroupLayer form — `enable_physics` ⟨ch:Bool⟩ with plain `gravity`/`wind`
+    //   {x,y} inches/s² (Moho writes these on every group; most are template defaults);
+    // • the BoneLayer form — Moho's own working rigs (the Boar startup file) carry the
+    //   world on the bone layer: `gravity` = {direction: ⟨ch:Val⟩ radians (270° = down),
+    //   strength: ⟨ch:Val⟩} (the format spec's `gravity {x,y}` guess corrected).
+    let ty = json::string(get(layer, "type")).unwrap_or_default();
+    let world = match ty.as_str() {
+        "GroupLayer" => {
+            let on = get(layer, "enable_physics").and_then(Channel::parse).is_some_and(|c| channel::sample_bool(&c, frame).unwrap_or(false));
+            if !on {
+                return;
+            }
+            let conv = |v: Option<anicraft_geom::Vec2>| -> Option<anicraft_geom::Vec2> {
+                v.map(|g| anicraft_geom::Vec2::new(g.x * b.dpi, -g.y * b.dpi))
+            };
+            let gravity = conv(get(layer, "gravity").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::new(0.0, 10.0 * b.dpi));
+            let wind = conv(get(layer, "wind").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::ZERO);
+            Some(anicraft_doc::PhysicsWorld { gravity, wind })
+        }
+        "BoneLayer" => {
+            // Direction in radians (y up): a layer-space vector, converted like every
+            // inch-space direction — ×dpi, y-flipped.
+            let Some(g) = get(layer, "gravity") else { return };
+            let Some(dir) = get(g, "direction").and_then(Channel::parse).and_then(|c| channel::sample_f64(&c, frame)) else {
+                return;
+            };
+            let Some(strength) = get(g, "strength").and_then(Channel::parse).and_then(|c| channel::sample_f64(&c, frame)) else {
+                return;
+            };
+            let (sin, cos) = (dir as f32).sin_cos();
+            let gravity = anicraft_geom::Vec2::new(cos * strength as f32 * b.dpi, -sin * strength as f32 * b.dpi);
+            Some(anicraft_doc::PhysicsWorld { gravity, wind: anicraft_geom::Vec2::ZERO })
+        }
+        _ => return,
     };
-    let gravity = conv(get(layer, "gravity").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::new(0.0, 10.0 * b.dpi));
-    let wind = conv(get(layer, "wind").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::ZERO);
-    let world = anicraft_doc::PhysicsWorld { gravity, wind }.sanitized();
+    let Some(world) = world else { return };
+    let world = world.sanitized();
     match &b.world {
         Some(_) => b.report.skip("physics worlds past the first (the first one simulates)"),
         None => b.world = Some(world),

@@ -64,7 +64,12 @@ pub(crate) fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out:
     let (bw, bh) = b.doc.bitmap(id).map(|m| (m.width as f32, m.height as f32)).unwrap_or((1.0, 1.0));
     let (w, h) = drawn_size(layer, bw, bh, b.dpi);
     let mut centre = get(layer, "origin").and_then(|v| json::vec2(Some(v))).unwrap_or(Vec2::ZERO);
-    if let Some(t) = get(layer, "psd_layer_translation").and_then(|v| json::vec2(Some(v))) {
+    // Moho writes {1000000, 1000000} on ordinary (non-PSD) image layers — a sentinel, not
+    // an offset (the image-warp fixture's evidence); only a sane value moves the picture.
+    if let Some(t) = get(layer, "psd_layer_translation")
+        .and_then(|v| json::vec2(Some(v)))
+        .filter(|t| t.x.abs() < 1e5 && t.y.abs() < 1e5)
+    {
         centre = centre + t;
     }
     deformer_flags(b, layer);
