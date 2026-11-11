@@ -404,25 +404,6 @@ pub(crate) fn soundtrack(s: &Session, first: u32, last: u32, rate: u32) -> (Vec<
     (voices, a, b)
 }
 
-/// A soundtrack WAV in the temp folder (for ffmpeg), removed when dropped.
-pub(crate) struct TempTrack(pub PathBuf);
-
-impl Drop for TempTrack {
-    fn drop(&mut self) {
-        let _ = crate::vfs::remove_file(&self.0);
-    }
-}
-
-/// The soundtrack of movie frames `first..=last` as a 48 kHz 16-bit WAV in the temp folder.
-pub(crate) fn temp_track(s: &Session, first: u32, last: u32) -> Result<TempTrack> {
-    const RATE: u32 = 48_000;
-    let nanos = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-    let track = TempTrack(std::env::temp_dir().join(format!("anicraft-track-{}-{nanos}.wav", std::process::id())));
-    let (voices, a, b) = soundtrack(s, first, last, RATE);
-    write_mix(&track.0, &voices, RATE, a, b, wav::Bits::Int16)?;
-    Ok(track)
-}
-
 /// Export Audio: the movie's soundtrack, as heard playing it from the first frame of the range
 /// (event sounds that started earlier are not included), as a stereo WAV.
 fn export_audio(s: &mut Session, p: &Value) -> Result<Value> {

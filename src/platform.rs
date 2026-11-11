@@ -167,14 +167,14 @@ pub fn save_settings(json: &str) -> Result<(), String> {
     }
 }
 
-/// Why this build can't run `cmd`, if it can't: a web page can't start ffmpeg or keep files in
+/// Why this build can't run `cmd`, if it can't: a web page can't spare the video encode or keep files in
 /// a folder of the computer (ADR 0036). The desktop app runs everything.
 pub fn unavailable(cmd: &str) -> Option<&'static str> {
     if !WEB {
         return None;
     }
     match cmd {
-        "file.export_video" => Some(tr_noop!("Video export runs ffmpeg, which a web browser can't start: use the desktop app, or export an animated GIF or a PNG sequence")),
+        "file.export_video" => Some(tr_noop!("Video export needs the desktop app: in a browser export an animated GIF, a PNG sequence or an HTML page")),
         "plugin.install" | "plugin.remove" | "plugin.reload" => Some(tr_noop!("Plug-ins are installed into a folder on your computer: use the desktop app")),
         _ => None,
     }

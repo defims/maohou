@@ -76,7 +76,7 @@ fn exports_come_back_as_files() {
         let wav = &out.iter().find(|(p, _)| p == Path::new("track.wav")).unwrap().1;
         assert!(wav.starts_with(b"RIFF") && !n.iter().any(|x| x.ends_with(".tmp")));
         let err = s.execute("file.export_video", &json!({"path": "movie.webm"})).unwrap_err().to_string();
-        assert!(err.contains("web browser"), "{err}");
+        assert!(err.contains("browser"), "{err}");
         assert!(vfs::take_written().is_empty());
     });
 }

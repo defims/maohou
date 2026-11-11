@@ -278,6 +278,7 @@ version = "0.1.0"
 dependencies = [
  "anicraft-doc",
  "anicraft-geom",
+ "anicraft-media",
  "anicraft-mohoproj-import",
  "anicraft-plugins",
  "anicraft-render",
