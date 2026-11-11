@@ -59,6 +59,12 @@ mod tests {
                 out.push(format!("  bones {}", s.bones.len()));
                 for b in &s.bones {
                     out.push(format!("  bone {} len {:.2} parent {:?}", b.name, b.length, b.parent));
+                    for a in &b.angle.actions {
+                        out.push(format!("  action {} keys {}", a.name, a.pose.keys.len()));
+                        for k in &a.pose.keys {
+                            out.push(format!("  pose {} {:.6}", k.frame, k.val));
+                        }
+                    }
                 }
             }
             if l.kind == LayerKind::Switch {
@@ -85,7 +91,7 @@ mod tests {
     #[test]
     fn corpus_documents_survive_export_and_reimport() {
         let Some(_) = corpus() else { eprintln!("skipped: no maop-corpus"); return };
-        for name in ["empty", "vectors", "keyframes-layer", "bones", "switch-keys", "point-anim", "text", "gradients-gui", "keyframes-roll"] {
+        for name in ["empty", "vectors", "keyframes-layer", "bones", "smartbones", "bones-dial", "bones-bind", "switch-keys", "point-anim", "text", "gradients-gui", "keyframes-roll"] {
             let Some((doc, again)) = round_trip(name) else { continue };
             let a = model_fingerprint(&doc);
             let b = model_fingerprint(&again);
