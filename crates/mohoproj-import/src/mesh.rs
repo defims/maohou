@@ -127,6 +127,12 @@ fn parse_mesh(b: &mut Builder, mesh: &Value) -> Option<MeshData> {
     }
     let mut curves = Vec::with_capacity(curves_json.len());
     for c in curves_json {
+        // A variable-width stroke profiled by another layer's curve: stage 5 follows
+        // upstream's ADR 0018 width profiles for point widths; a sampled profile curve has
+        // no slot yet — the sidecar keeps it.
+        if json::integer(get(c, "profile_curve_id")).is_some_and(|v| v != -1) {
+            b.report.skip("stroke profiles drawn from profile curves");
+        }
         let closed = json::boolean(get(c, "closed")).unwrap_or(false);
         let refs = array(get(c, "points")).unwrap_or(&[]);
         let mut pts = Vec::with_capacity(refs.len());

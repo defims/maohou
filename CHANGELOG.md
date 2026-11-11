@@ -4,6 +4,27 @@
 
 ## Unreleased
 
+* **Switch layers, point-level animation and text strokes** (ADR 0105). Moho switch layers
+  import as switches: the `switch_keys` selector rides the layer as a stepping string
+  channel, the variants stay ordinary child layers, and evaluation shows exactly the branch
+  every enclosing switch names at the frame — an unselected switch shows nothing. Switches
+  are edited through `switch.set_variant`, `switch.delete_key` and `switch.info`, and the
+  timeline names the variant the playhead shows. Mesh points animate: an imported point's
+  position channel rides its shape as a point track, and evaluation rebuilds the path per
+  frame with the handles following (a shape whose points don't animate keeps its shared
+  path, so nothing costs anything until it moves). Curve trim imports (Moho's untrimmed
+  −0.1→1.1 clamps to no trim; a trimmed shape draws its stroke, the cut-open ring no longer
+  filling). Point widths land on upstream's width profiles — a shape whose points agree
+  multiplies the stroke width exactly, varying widths become a profile by arc fraction —
+  and a uniform point colour recolours fill and stroke. Text gains its stroke
+  (`text.create`/`text.edit` take `stroke_width`/`stroke_color`; the Properties panel has a
+  Stroke row), and a bone-bound text layer imports its saved mesh as real, bindable shapes
+  instead of a text block. `.anicraft` files are format v8 (older files open unchanged).
+  Still approximated: switch cross-fades and frame-by-frame switches are counted (the
+  selector steps), point widths that animate key at the import frame, and a stroke profile
+  drawn from another layer's curve is counted. Verified against working Moho fixtures
+  (switch-keys.moho, point-anim.moho — CASES #18/#19) frame by frame.
+
 * **The bone system** (ADR 0104). Moho rigs import and animate: a `BoneLayer`'s skeleton
   comes across whole — the hierarchy, the per-bone angle/position/scale/IK-target channels
   (y-flipped to the stage's units like every channel), the angle constraints — with every

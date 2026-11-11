@@ -1119,10 +1119,14 @@ fn frame_props(app: &mut App, ui: &mut egui::Ui, layer: &anicraft_engine::doc::L
         let n = tl.layers.iter().position(|l| l.id == layer.id).map_or(0, |i| tl.group_range(i).len().saturating_sub(1));
         let what = if n == 1 { "1 layer".to_string() } else { format!("{n} layers") };
         let bones = layer.skeleton.as_ref().map_or(0, |s| s.bones.len());
-        let rig = if layer.kind == anicraft_engine::doc::LayerKind::Bone {
-            format!("Bone rig · {} {} · {what}", bones, if bones == 1 { "bone" } else { "bones" })
-        } else {
-            format!("Folder · {what}")
+        let rig = match layer.kind {
+            anicraft_engine::doc::LayerKind::Bone => format!("Bone rig · {} {} · {what}", bones, if bones == 1 { "bone" } else { "bones" }),
+            anicraft_engine::doc::LayerKind::Switch => {
+                let at = app.s.frame;
+                let picked = layer.switch_selection(at).unwrap_or_else(|| "nothing".into());
+                format!("Switch · {what} · shows {}", if picked == "nothing" { picked } else { format!("“{picked}”") })
+            }
+            _ => format!("Folder · {what}"),
         };
         ui.label(text(Type::Label, rig));
         ui.label(text(Type::Caption, "Folders hold layers, not frames. Hiding or locking the folder hides or locks everything in it; move layers in under it with Up and Down."));
