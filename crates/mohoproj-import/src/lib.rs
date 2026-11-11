@@ -26,7 +26,8 @@ pub mod channel;
 pub mod import;
 pub mod json;
 pub mod layer;
-pub mod mesh;
+pub mod image;
+mod mesh;
 pub mod text;
 pub mod zip;
 

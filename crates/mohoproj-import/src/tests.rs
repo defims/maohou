@@ -4,7 +4,7 @@
 
 use crate::import::{import_json, Report};
 use crate::zip;
-use anicraft_geom::Vec2;
+use anicraft_geom::{PathCmd, Vec2};
 use serde_json::{json, Value};
 
 /// A minimal legal document (31 top-level keys are Moho's; only what the reader touches is
@@ -134,7 +134,7 @@ fn static_layer_transforms_bake_into_elements() {
     assert!((origin.x - 960.0).abs() < 1e-3 && (origin.y - 360.0).abs() < 1e-3, "origin+translation, y up → y down");
     // The shape's 0.5-inch x axis (160 px) turns upward (y flips with the rotation)…
     let along = el.transform.apply(anicraft_geom::Vec2::new(0.5, 0.0)) - origin;
-    assert!(along.x.abs() < 1e-3 && (along.y - (-320.0)).abs() < 1e-3, "rotation π/2 maps +x to +y (up = −y on screen), 2× scale");
+    assert!(along.x.abs() < 1e-3 && (along.y - (-320.0)).abs() < 1e-3, "rotation π/2 maps +x to +y (up = -y on screen), 2× scale");
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn unsupported_things_count_and_degrade() {
     let l = doc.timeline(0).layers.iter().find(|l| l.name == "L").unwrap();
     assert_eq!(l.filters, vec![anicraft_doc::Filter::Blur { blur_x: 80.0, blur_y: 80.0, quality: 3 }]);
     // The rig layer carries its bone: a bone layer kind, the angle channel y-flipped
-    // (Moho CCW +1.57 → screen clockwise −1.57), the untouched keys in the sidecar.
+    // (Moho CCW +1.57 → screen clockwise -1.57), the untouched keys in the sidecar.
     let rig = doc.timeline(0).layers.iter().find(|l| l.name == "Rig").unwrap();
     assert_eq!(rig.kind, anicraft_doc::LayerKind::Bone);
     let sk = rig.skeleton.as_ref().unwrap();
@@ -402,4 +402,116 @@ fn a_zip_package_reads_like_a_bare_file() {
     let (doc2, _) = crate::import_path(&path).unwrap();
     std::fs::remove_file(&path).ok();
     assert_eq!(doc, doc2);
+}
+
+fn tiny_png() -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, 2, 1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().unwrap();
+        wr.write_image_data(&[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    }
+    out
+}
+
+fn import_with_media(root: &Value, name: &str, bytes: Vec<u8>) -> (anicraft_doc::Document, Report) {
+    let read = move |p: &str| -> Result<Option<Vec<u8>>, crate::MohoError> { Ok((p == name).then_some(bytes.clone())) };
+    import_json(root.clone(), &read, None).unwrap_or_else(|e| panic!("import failed: {e}"))
+}
+
+/// The image-layer mesh warp (ADR 0106): a 2-inch-wide image layer whose 4-point cage
+/// becomes two textured triangles; a corner with an animated position channel rides both
+/// triangles as point tracks with pinned image coordinates, and evaluation re-aims the
+/// bitmap matrix per frame.
+#[test]
+fn image_meshes_warp_their_picture() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "ImageLayer", "name": "Warp",
+        "image_fileref": {"path": "media/tex.png", "relativeTo": "MOHOProject"},
+        "width": 2.0, "height": 1.0,
+        "mesh": {
+            "points": [
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -1.0, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0, 12], vec![json!({"x": 1.0, "y": 0.5}), json!({"x": 1.5, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 1.0, "y": -0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -1.0, "y": -0.5})])}
+            ],
+            "curves": [{"closed": true, "points": [
+                {"point": 0, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 1, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 2, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 3, "smoothness": channel("Val", vec![0], vec![json!(0.0)])}
+            ]}],
+            "shapes": [{"has_fill": false, "has_outline": false, "edges": {"curve": [0, 0, 0, 0], "segment": [0, 1, 2, 3], "flag": [0, 0, 0, 0]}}]
+        }
+    });
+    let (doc, report) = import_with_media(&root, "media/tex.png", tiny_png());
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let els = &doc.timeline(0).layers[0].keyframes[0].elements;
+    assert_eq!(els.len(), 2, "the quad cage splits into two triangles");
+    // Both pieces are textured triangles whose one animated corner carries its channel.
+    for el in els {
+        let anicraft_doc::ElementKind::Shape(s) = &el.kind else { panic!("a shape") };
+        assert!(s.texture.is_some(), "the image coordinates ride the piece");
+        assert_eq!(s.points.len(), 1, "one animated corner per piece");
+        assert_eq!(s.texture.as_ref().unwrap().uv.len(), 3);
+        assert_eq!(anicraft_doc::path_point_count(&s.path), 3);
+    }
+    // The two pieces share the animated corner's channel, so the seam stays welded.
+    let at = |f: u32| -> Vec<anicraft_geom::Vec2> {
+        els.iter().map(|el| {
+            let anicraft_doc::ElementKind::Shape(s) = &el.kind else { panic!("a shape") };
+            s.points[0].position.sample(f as f32).unwrap()
+        }).collect()
+    };
+    let (a0, b0) = (at(0), at(12));
+    assert!((a0[0] - b0[0]).length() > 0.4, "the corner moves between the frames");
+    // Evaluation: frame 12's paths land where the channels say (stage pixels).
+    let dl = anicraft_doc::evaluate(&doc, 12);
+    assert_eq!(dl.items.len(), 2);
+    // Paths and fill matrices live in shape space (Moho inches, y up); the element
+    // transform carries them to the stage.
+    let inch = [(-1.0_f32, 0.5_f32), (1.5, 0.5), (1.0, -0.5), (-1.0, -0.5)];
+    let uv = [(0.0_f32, 0.0_f32), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)];
+    for it in &dl.items {
+        let PathCmd::MoveTo(p) = it.path.cmds[0] else { panic!("move") };
+        assert!(inch.iter().any(|(x, y)| (p - anicraft_geom::Vec2::new(*x, *y)).length() < 1e-3), "triangle corner at the deformed position: {p:?}");
+        // The fill is a bitmap whose matrix aims the image at the deformed piece.
+        let anicraft_doc::Paint::Bitmap { matrix, bitmap, .. } = it.fill.clone().unwrap() else { panic!("bitmap fill") };
+        assert_eq!(bitmap.0, doc.bitmaps[0].id.0);
+        let mut hit = false;
+        for (u, (x, y)) in uv.iter().zip(inch) {
+            if (matrix.apply(anicraft_geom::Vec2::new(u.0, u.1)) - anicraft_geom::Vec2::new(x, y)).length() < 1e-2 {
+                hit = true;
+            }
+        }
+        assert!(hit, "a pinned uv lands on its deformed corner");
+    }
+}
+
+/// An undeformed image layer keeps the plain picture, sized by the layer's own width/height
+/// (inches) and offset by its PSD translation.
+#[test]
+fn plain_image_layers_draw_their_picture_sized_and_placed() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "ImageLayer", "name": "Photo",
+        "image_fileref": {"path": "media/tex.png", "relativeTo": "MOHOProject"},
+        "width": 1.0, "height": 0.5,
+        "psd_layer_translation": {"x": 0.5, "y": 0.25}
+    });
+    let (doc, report) = import_with_media(&root, "media/tex.png", tiny_png());
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let el = &doc.timeline(0).layers[0].keyframes[0].elements[0];
+    let anicraft_doc::ElementKind::Shape(s) = &el.kind else { panic!("a shape") };
+    let anicraft_doc::Paint::Bitmap { matrix, .. } = s.fill.as_ref().unwrap() else { panic!("bitmap fill") };
+    // The image (2×1 px) fills a 1×0.5-inch box whose centre sits at the PSD translation.
+    // Image y runs down, layer y up: the image's top edge sits at centre.y + h/2.
+    let tl = matrix.apply(anicraft_geom::Vec2::new(0.0, 0.0));
+    let br = matrix.apply(anicraft_geom::Vec2::new(2.0, 1.0));
+    assert!((tl.x - 0.0).abs() < 1e-3 && (tl.y - 0.5).abs() < 1e-3, "top-left at (centre.x-w/2, centre.y+h/2): {tl:?}");
+    assert!((br.x - 1.0).abs() < 1e-3 && (br.y - 0.0).abs() < 1e-3, "{br:?}");
 }

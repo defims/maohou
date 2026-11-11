@@ -19,10 +19,10 @@ use crate::anim;
 use crate::channel::{self, Channel};
 use crate::import::{Builder, MOHO_DPI};
 use crate::json::{self, array, get};
-use crate::mesh;
+use crate::{image, mesh};
 use crate::text;
-use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind, Paint, Shape};
-use anicraft_geom::{Affine, FillRule, Path};
+use anicraft_doc::{Element, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind};
+use anicraft_geom::Affine;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -396,7 +396,7 @@ fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, content: Content, b
     let mut els: Vec<Arc<Element>> = Vec::new();
     match content {
         Content::Mesh(m) => mesh::mesh_elements(b, m, world, &mut els),
-        Content::Image(src) => image_elements(b, src, world, &mut els),
+        Content::Image(src) => image::image_elements(b, src, world, &mut els),
         Content::Text(src) => text::text_elements(b, src, world, &mut els),
     }
     if let Some(bone) = bind {
@@ -418,44 +418,6 @@ fn parent_bone(layer: &Value) -> Option<anicraft_doc::BoneId> {
         .filter(|i| *i >= 0)
         .and_then(|i| u32::try_from(i).ok())
         .map(anicraft_doc::BoneId)
-}
-
-/// An image layer: its file (found in the package or beside the document) becomes a bitmap
-/// rectangle of the image's natural size, anchored at the layer origin.
-fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {
-    let Some(file) = fileref(layer) else {
-        b.report.skip("image layers without a file reference");
-        return;
-    };
-    let bytes = match (b.read)(&file) {
-        Ok(Some(bytes)) => bytes,
-        Ok(None) => {
-            b.report.skip("missing image files");
-            return;
-        }
-        Err(e) => {
-            b.report.notes.push(format!("image file unreadable: {e}"));
-            return;
-        }
-    };
-    let short: String = file.rsplit(['/', '\\']).next().unwrap_or(&file).chars().take(256).collect();
-    let Some(id) = b.register_bitmap(short, bytes) else {
-        b.report.skip("image files that are not PNG or JPEG");
-        return;
-    };
-    // Moho shows an image one-to-one at its natural pixel size: inches = pixels / dpi.
-    let (bw, bh) = b.doc.bitmap(id).map(|m| (m.width, m.height)).unwrap_or((0, 0));
-    let w = bw as f32 / b.dpi;
-    let h = bh as f32 / b.dpi;
-    let path = Path::rect(-w * 0.5, -h * 0.5, w, h);
-    let paint = Paint::Bitmap { bitmap: id, repeat: false, matrix: Affine::IDENTITY };
-    out.push(Arc::new(Element {
-        id: ElementId(b.doc.alloc_id()),
-        name: String::new(),
-        transform: b.to_px.mul(&world),
-        color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }),
-    }));
 }
 
 /// An image (or texture) file reference: `{path, relativeTo}`. Moho 14 names the image

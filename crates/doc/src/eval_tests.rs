@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Channel, Easing, Filter, Keyframe, Scene, Symbol, SymbolId, SymbolKind, Tween, TweenKind};
+use crate::{Bitmap, BitmapId, Channel, Easing, Filter, Keyframe, Scene, Symbol, SymbolId, SymbolKind, TextureMap, Tween, TweenKind};
 use anicraft_geom::Vec2;
 
 fn shape_el(id: u64, x: f32) -> Element {
@@ -837,4 +837,64 @@ fn a_stroked_text_draws_its_fill_then_its_outline() {
     assert_eq!(dl.items.len(), 2, "fill, then the stroke over it");
     assert!(dl.items[0].fill.is_some() && dl.items[0].stroke.is_none());
     assert!(dl.items[1].fill.is_none() && dl.items[1].stroke.is_some());
+}
+
+/// A textured triangle (ADR 0106): its fill is derived from the texture pin every frame, so
+/// moving the pinned points re-aims the bitmap matrix while the path follows the points.
+#[test]
+fn a_texture_pinned_triangle_refits_its_bitmap_every_frame() {
+    let mut png = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png, 2, 1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().unwrap();
+        wr.write_image_data(&[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    }
+    let bm = Bitmap::from_png(BitmapId(1), "tex", png).unwrap();
+    let mut d = Document::default();
+    d.bitmaps.push(Arc::new(bm));
+    // A triangle (0,0) (100,0) (100,50) in stage pixels; uv in image pixels (2×1).
+    let uv = [Vec2::new(0.0, 0.0), Vec2::new(2.0, 0.0), Vec2::new(2.0, 1.0)];
+    let mut path = Path::new();
+    path.move_to(Vec2::new(0.0, 0.0)).line_to(Vec2::new(100.0, 0.0)).line_to(Vec2::new(100.0, 50.0)).close();
+    // The middle corner slides right and down over 10 frames.
+    let mut ch = Channel::default();
+    ch.set_key(0, Vec2::new(100.0, 0.0));
+    ch.set_key(10, Vec2::new(120.0, 10.0));
+    let shape = Shape {
+        path: Arc::new(path),
+        fill: None,
+        stroke: None,
+        fill_rule: anicraft_geom::FillRule::NonZero,
+        merge: false,
+        bind: Vec::new(),
+        points: vec![PointTrack { index: 1, position: ch }],
+        trim: None,
+        texture: Some(Box::new(TextureMap { bitmap: BitmapId(1), uv: uv.to_vec() })),
+    };
+    let mut k = Keyframe::new(0, 20);
+    k.elements.push(Arc::new(Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Shape(shape) }));
+    layer0(&mut d).keyframes = vec![Arc::new(k)];
+
+    let at = |f: u32| {
+        let it = &evaluate(&d, f).items[0];
+        let Paint::Bitmap { matrix, bitmap, repeat } = it.fill.clone().unwrap() else { panic!("bitmap fill at frame {f}") };
+        (matrix, bitmap, repeat, it.path.clone())
+    };
+    // At rest the matrix maps image pixels onto the triangle exactly.
+    let (m0, bitmap, repeat, p0) = at(0);
+    assert_eq!(bitmap, BitmapId(1));
+    assert!(!repeat);
+    let c = m0.apply(Vec2::new(2.0, 1.0));
+    assert!((c.x - 100.0).abs() < 1e-3 && (c.y - 50.0).abs() < 1e-3, "{c:?} vs (100, 50)");
+    // The path still follows the point track.
+    let PathCmd::LineTo(p) = p0.cmds[1] else { panic!("line kept") };
+    assert!((p.x - 100.0).abs() < 1e-3 && p.y.abs() < 1e-3);
+    // Mid-deformation, both the path and the matrix aim at the moved corner.
+    let (m5, _, _, p5) = at(5);
+    let PathCmd::LineTo(p) = p5.cmds[1] else { panic!("line kept") };
+    assert!((p.x - 110.0).abs() < 1e-3 && (p.y - 5.0).abs() < 1e-3, "{p:?}");
+    let c = m5.apply(Vec2::new(2.0, 0.0));
+    assert!((c.x - 110.0).abs() < 1e-3 && (c.y - 5.0).abs() < 1e-3, "the matrix aims the image corner at the moved one: {c:?}");
 }

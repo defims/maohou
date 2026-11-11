@@ -20,6 +20,7 @@ pub mod motion;
 pub mod path_table;
 pub mod points;
 pub mod rig;
+pub mod texture;
 pub mod width;
 pub mod stroke_style;
 pub mod player;
@@ -34,6 +35,7 @@ pub use hints::{HINT_TOLERANCE, HintSide, MAX_SHAPE_HINTS, ShapeHint, hint_index
 pub use library::{FolderId, LibraryEntry, LibraryFolder, LibraryItem, LibraryTree, NameError};
 pub use motion::{MotionTween, OnPath, Pin, PinError, Property, PropertyKey, Props, Track, motion_path};
 pub use points::{PointTrack, Trim, path_point_count, rebuild as rebuild_path, trim as trim_path};
+pub use texture::{TextureMap, fit_affine, paint_for as texture_paint_for};
 pub use sound::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundFormat, SoundId, SoundSync};
 pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile};
 pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
@@ -294,17 +296,23 @@ pub struct Shape {
     /// ring is not a shape any more. Boxed: a rare feature that shouldn't grow every shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trim: Option<Box<Trim>>,
+    /// The shape's bitmap fill pinned to its path points (Moho's image-layer mesh warp;
+    /// ADR 0106): as the points animate, evaluation refits the fill's matrix from the
+    /// deformed path onto the pinned image coordinates, so the texture follows the warp.
+    /// `None` leaves the fill's own matrix in charge. Boxed like `trim`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<Box<TextureMap>>,
 }
 
 impl PartialEq for Shape {
     fn eq(&self, o: &Shape) -> bool {
-        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge && self.bind == o.bind && self.points == o.points && self.trim == o.trim
+        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge && self.bind == o.bind && self.points == o.points && self.trim == o.trim && self.texture == o.texture
     }
 }
 
 impl Shape {
     pub fn filled(path: Path, fill: Paint) -> Shape {
-        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }
+        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None, texture: None }
     }
     pub fn with_stroke(mut self, color: Rgba, width: f32) -> Shape {
         self.stroke = Some(Stroke::new(color, width));
