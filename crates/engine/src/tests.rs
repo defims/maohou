@@ -506,8 +506,9 @@ fn save_load_round_trip() {
 }
 
 /// A Moho import round-trips the `.anicraft` format whole: the mapped document and the
-/// `maop_maohou` sidecar come back byte-structure-equal (the stage-1 gate for empty.moho and
-/// keyframes.moho; needs the maop-corpus beside the workspace or at `MAOHOU_FIXTURES`).
+/// `maop_maohou` sidecar come back byte-structure-equal (the stage-1 gate for empty.moho
+/// and keyframes.moho, stage 5 adds the text fixture's TextLayer and the switch fixture's
+/// selector channel; needs the maop-corpus beside the workspace or at `MAOHOU_FIXTURES`).
 #[test]
 fn moho_imports_round_trip_through_the_native_format() {
     let mut dir = std::path::PathBuf::from(std::env::var("MAOHOU_FIXTURES").unwrap_or_default());
@@ -518,7 +519,7 @@ fn moho_imports_round_trip_through_the_native_format() {
         eprintln!("skipped: no maop-corpus at MAOHOU_FIXTURES or ../../maop-corpus");
         return;
     }
-    for name in ["empty", "keyframes"] {
+    for name in ["empty", "keyframes", "text", "switch"] {
         let path = dir.join(format!("{name}.moho"));
         let (doc, _) = anicraft_mohoproj_import::import_path(&path).unwrap_or_else(|e| panic!("{name}.moho: {e}"));
         let back = format::from_json(&format::to_json(&doc).unwrap()).unwrap();

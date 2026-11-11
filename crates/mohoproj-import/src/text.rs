@@ -5,11 +5,17 @@
 //! saved `mesh_layer` is a derived view), so re-laying the text out here matches its intent.
 //! Units: `textsize` is points at Moho's 72 pt/inch → pixels at the document's dpi. The
 //! justification code maps 1/2/3 → left/centre/right (Moho's default 1 is left-aligned
-//! text). Text strokes, kerning and leading, inherited styles and speech balloons have no
-//! slot in a text block yet and are counted when non-default.
+//! text). The text stroke imports (ADR 0105): `stroke`, `linecolor` and `linewidth` (an
+//! inch distance, like a shape's) become the block's stroke in pixels. Kerning, leading,
+//! inherited styles and speech balloons have no slot in a text block yet and are counted
+//! when non-default. The embedded `mesh_layer` — Moho's derived geometry of the text —
+//! imports as real, bone-bindable shapes only when bones need it: a text riding a rig
+//! (its `parent_bone` or point bindings set) draws as that geometry, because a text block
+//! cannot follow bones; a plain text layer keeps re-laid, editable text and ignores the
+//! derived mesh, exactly as Moho regenerates it at render time.
 
 use crate::import::Builder;
-use crate::json::{self, get};
+use crate::json::{self, array, get};
 use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Rgba, TextAlign, TextBlock};
 use anicraft_geom::{Affine, Vec2};
 use anicraft_text::{Align, FaceMatch, Fonts, TextError};
@@ -18,6 +24,17 @@ use std::sync::Arc;
 
 pub(crate) fn text_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {
     let Some(txt) = json::string(get(layer, "text")).filter(|t| !t.trim().is_empty()) else { return };
+    // A text riding a rig (its whole layer bound, or its saved points bound) draws as the
+    // saved `mesh_layer` geometry: real shapes the bones can carry (ADR 0105). A plain text
+    // layer keeps the re-laid text block — Moho regenerates that mesh from the text anyway.
+    if let Some(ml) = get(layer, "mesh_layer")
+        && is_bound(layer, ml)
+        && has_content(get(ml, "mesh").unwrap_or(&Value::Null))
+    {
+        crate::mesh::mesh_elements(b, get(ml, "mesh").unwrap_or(&Value::Null), world, out);
+        b.report.notes.push(format!("text \"{txt}\" drawn as its saved mesh geometry (it rides bones)"));
+        return;
+    }
     if !json::boolean(get(layer, "fill")).unwrap_or(true) {
         b.report.skip("text drawn as stroke only");
         return;
@@ -100,12 +117,22 @@ pub(crate) fn text_elements(b: &mut Builder, layer: &Value, world: Affine, out: 
     }));
 }
 
-/// Text features without a slot yet, counted when non-default. The embedded `mesh_layer` is
-/// Moho's derived geometry and simply ignored (the fonts re-shape the text here).
-fn extras(b: &mut Builder, layer: &Value) {
-    if json::boolean(get(layer, "stroke")).unwrap_or(false) {
-        b.report.skip("text strokes (drawn fill only)");
+/// Whether the text layer rides bones: a whole-layer binding or any bound saved point.
+fn is_bound(layer: &Value, mesh_layer: &Value) -> bool {
+    if json::integer(get(layer, "parent_bone")).is_some_and(|b| b >= 0) {
+        return true;
     }
+    let Some(mesh) = get(mesh_layer, "mesh") else { return false };
+    array(get(mesh, "points")).is_some_and(|pts| pts.iter().any(|p| json::integer(get(p, "parent")).is_some_and(|b| b >= 0)))
+}
+
+/// Whether the saved mesh would draw anything at all.
+fn has_content(mesh: &Value) -> bool {
+    array(get(mesh, "points")).is_some_and(|p| !p.is_empty()) && array(get(mesh, "shapes")).is_some_and(|s| !s.is_empty())
+}
+
+/// Text features without a slot yet, counted when non-default.
+fn extras(b: &mut Builder, layer: &Value) {
     if json::integer(get(layer, "kerning")).is_some_and(|k| k != 0) {
         b.report.skip("text kerning (drawn as 0)");
     }

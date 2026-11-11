@@ -88,15 +88,22 @@ fn switch_imports() {
     let Some(path) = fixture("switch") else { return missing_corpus() };
     let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("switch.moho: {e}"));
     assert_eq!(layer_names(&doc), ["Mouths", "Smile", "Frown", "Layer 1"]);
-    // The fixture's switch has no selection: every variant stays visible, noted as such.
-    assert!(report.notes.iter().any(|n| n.contains("switch layer without a selection")), "{report:?}");
+    // The switch imports as a switch (ADR 0105): its variants are children and its selector
+    // channel rides the layer. This fixture never selected a variant, so the channel holds
+    // one empty key — evaluation shows nothing until a variant is picked.
+    assert!(report.notes.is_empty() || !report.notes.iter().any(|n| n.contains("switch")), "{report:?}");
+    assert!(!report.skipped.iter().any(|(k, _)| k.contains("switch")), "{:?}", report.skipped);
     let mouths = doc.timeline(0).layers.iter().find(|l| l.name == "Mouths").unwrap();
-    assert_eq!(mouths.kind, anicraft_doc::LayerKind::Folder);
+    assert_eq!(mouths.kind, anicraft_doc::LayerKind::Switch);
+    assert_eq!(mouths.switch_to.keys.len(), 1);
+    assert_eq!(mouths.switch_to.keys[0].val, "");
     for v in ["Smile", "Frown"] {
         let l = doc.timeline(0).layers.iter().find(|l| l.name == v).unwrap();
         assert_eq!(l.parent, Some(mouths.id), "{v} inside the switch");
         assert!(l.visible);
     }
+    // Nothing draws until a variant is picked: the saved state selects none.
+    assert!(anicraft_doc::evaluate(&doc, 0).items.is_empty());
 }
 
 /// The stage-4 skeleton gate (ADR 0104): bones.moho's five-bone rig imports whole — the
@@ -171,9 +178,9 @@ fn gradients_imports() {
     assert_eq!(count(|f| matches!(f, anicraft_doc::Paint::Reflected { .. })), 4);
     assert_eq!(count(|f| matches!(f, anicraft_doc::Paint::Angle { .. })), 5);
     assert_eq!(count(|f| matches!(f, anicraft_doc::Paint::Linear { .. })), 0, "the linear shapes carry no fill");
-    // All four gradient enums import without approximation now. The one remaining report
-    // is the fixture's variable-width point (a per-point feature of a later milestone).
-    assert_eq!(report.skipped, [(("variable point widths (drawn uniform)".to_string()), 1)].into_iter().collect(), "{:?}", report.skipped);
+    // All four gradient enums import without approximation now, and the fixture's uniform
+    // point width (1.75× on every point) rides the stroke width exactly.
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
     // The named style table comes across (Moho's 12 built-ins define nothing but names).
     assert_eq!(doc.styles.len(), 12);
     assert_eq!(doc.styles[0].name, "Wet Ink");
