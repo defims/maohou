@@ -93,6 +93,22 @@ fn hot_tip(app: &App, pointer: Pos2, to_screen: impl Fn(Vec2) -> Pos2) -> Option
 }
 
 /// Cursor over a grabbable tip.
+/// Whether the active layer is a Moho bone rig (ADR 0104): the layer itself is a rig, or it
+/// sits in one (its artwork binds to that rig). Upstream's armature tool shares the tool slot.
+pub(crate) fn on_rig_layer(app: &App) -> bool {
+    let tl = app.s.doc.timeline(app.s.scene);
+    let mut cur = Some(app.s.layer);
+    for _ in 0..=anicraft_doc::MAX_LAYER_DEPTH {
+        let Some(id) = cur else { break };
+        let Some(l) = tl.layer(id) else { break };
+        if l.kind == LayerKind::Bone {
+            return true;
+        }
+        cur = l.parent;
+    }
+    false
+}
+
 pub fn cursor(app: &App, pointer: Option<Pos2>, to_screen: impl Fn(Vec2) -> Pos2 + Copy) -> Option<CursorIcon> {
     if app.tool != Tool::Bone || app.drag != Drag::None {
         return None;
@@ -107,7 +123,7 @@ pub fn drag_start(app: &mut App, sp: Pos2, to_screen: impl Fn(Vec2) -> Pos2 + Co
         return None;
     }
     let (bone, _) = hot_tip(app, sp, to_screen)?;
-    app.s.begin_gesture("Pose Bones");
+    app.s.begin_gesture(tr!("Pose Bones"));
     Some(Drag::BoneIk { bone })
 }
 

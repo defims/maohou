@@ -7,6 +7,7 @@
 pub use anicraft_audio as audio;
 pub use anicraft_actions as actions;
 
+pub mod armature;
 mod bitmap;
 mod channel;
 pub mod camera;
@@ -14,11 +15,13 @@ mod filter;
 mod easing;
 mod eval;
 mod hints;
+pub mod library;
 pub mod motion;
 pub mod path_table;
 pub mod points;
 pub mod rig;
 pub mod width;
+pub mod stroke_style;
 pub mod player;
 pub mod sample;
 pub mod sound;
@@ -28,13 +31,16 @@ pub use bitmap::{Bitmap, BitmapId, ImageError, MAX_BITMAP_EDGE, Pixels, base64_e
 pub use channel::{Channel, ChannelValue, Handle, Interp, Key, MAX_CHANNEL_FRAME, MAX_CHANNEL_KEYS};
 pub use easing::Easing;
 pub use hints::{HINT_TOLERANCE, HintSide, MAX_SHAPE_HINTS, ShapeHint, hint_index, hint_letter, nearest_outline, placed_on, shapes_centre};
-pub use motion::{MotionTween, OnPath, Property, PropertyKey, Props, Track, motion_path};
+pub use library::{FolderId, LibraryEntry, LibraryFolder, LibraryItem, LibraryTree, NameError};
+pub use motion::{MotionTween, OnPath, Pin, PinError, Property, PropertyKey, Props, Track, motion_path};
 pub use points::{PointTrack, Trim, path_point_count, rebuild as rebuild_path, trim as trim_path};
 pub use sound::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundFormat, SoundId, SoundSync};
 pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile};
+pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
 pub use camera::Camera;
 pub use rig::{Action as BoneAction, Bone, BoneId, Skeleton, MAX_BONES};
-pub use eval::{DisplayItem, DisplayList, Group, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_player, evaluate_scene, evaluate_scene_camera, guide_walk, instance_start};
+pub use eval::{DisplayItem, DisplayList, Group, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_player, evaluate_scene, evaluate_scene_camera, evaluate_timeline, evaluate_timeline_at, guide_walk, instance_start};
+pub use armature::{Armature, JointAngle, Limits, Pose};
 pub use actions::{Action, ButtonEvent, EventHandler, FrameScript, Language, PluginScript, SourceScript};
 
 use anicraft_geom::{Affine, FillRule, Path, Rect, Vec2};
@@ -179,7 +185,8 @@ impl Paint {
     }
 }
 
-/// Stroke style: round joins and caps, one width or a width profile (ADR 0018).
+/// A line: colour, width, an optional width profile (ADR 0018) and its style: caps, joins,
+/// miter limit, dashes (ADR 0046).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "StrokeFile")]
 pub struct Stroke {
@@ -189,40 +196,60 @@ pub struct Stroke {
     /// How the width varies along each subpath (`None`: the same everywhere). Never uniform.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<WidthProfile>,
+    /// Caps, joins and dashes. The default (round, solid) is written as nothing, so strokes
+    /// without a style are stored as before.
+    #[serde(default, skip_serializing_if = "StrokeStyle::is_default")]
+    pub style: StrokeStyle,
 }
 
-/// What a file may hold for a stroke (a uniform profile is dropped on load).
+/// What a file may hold for a stroke (a uniform profile is dropped on load, the style is
+/// sanitized).
 #[derive(Deserialize)]
 struct StrokeFile {
     color: Rgba,
     width: f32,
     #[serde(default)]
     profile: Option<WidthProfile>,
+    #[serde(default)]
+    style: StrokeStyle,
 }
 
 impl From<StrokeFile> for Stroke {
     fn from(f: StrokeFile) -> Stroke {
-        Stroke { color: f.color, width: f.width, profile: f.profile.filter(|p| !p.is_uniform()) }
+        Stroke { color: f.color, width: f.width, profile: f.profile.filter(|p| !p.is_uniform()), style: f.style.sanitized() }
     }
 }
 
 impl Stroke {
-    /// A stroke of one width.
+    /// A solid stroke of one width with round caps and joins.
     pub fn new(color: Rgba, width: f32) -> Stroke {
-        Stroke { color, width, profile: None }
+        Stroke { color, width, profile: None, style: StrokeStyle::default() }
     }
     pub fn with_profile(self, profile: Option<WidthProfile>) -> Stroke {
         Stroke { profile: profile.filter(|p| !p.is_uniform()), ..self }
     }
+    /// The same stroke with caps, joins and dashes from `style` (sanitized).
+    pub fn with_style(self, style: StrokeStyle) -> Stroke {
+        Stroke { style: style.sanitized(), ..self }
+    }
     /// The farthest the stroke reaches from its path (local units): half its nominal width
-    /// times the profile's widest factor.
+    /// times the profile's widest factor, times what miter corners and square caps add.
     pub fn reach(&self) -> f32 {
         let w = if self.width.is_finite() { self.width.max(0.0) } else { 0.0 };
-        w * 0.5 * self.profile.as_ref().map_or(1.0, WidthProfile::max_factor)
+        w * 0.5 * self.profile.as_ref().map_or(1.0, WidthProfile::max_factor) * self.style.reach_factor()
     }
-    /// The stroke `t` of the way to `o` (shape tweens): colour, width and profile blend.
+    /// The stroke of a shape scaled by `k` (mean scale): the width and the dashes scale.
+    pub fn scaled(&self, k: f32) -> Stroke {
+        Stroke { width: self.width * k, style: self.style.scaled(k), ..self.clone() }
+    }
+    /// The stroke `t` of the way to `o` (shape tweens): colour, width, profile and style blend.
     pub fn lerp(&self, o: &Stroke, t: f32) -> Stroke {
-        Stroke { color: self.color.lerp(o.color, t), width: anicraft_geom::lerp(self.width, o.width, t), profile: WidthProfile::lerp(self.profile.as_ref(), o.profile.as_ref(), t) }
+        Stroke {
+            color: self.color.lerp(o.color, t),
+            width: anicraft_geom::lerp(self.width, o.width, t),
+            profile: WidthProfile::lerp(self.profile.as_ref(), o.profile.as_ref(), t),
+            style: self.style.lerp(&o.style, t),
+        }
     }
 }
 
@@ -264,9 +291,9 @@ pub struct Shape {
     pub points: Vec<PointTrack>,
     /// The part of each subpath that draws (Moho's curve trim; ADR 0105). `None` draws
     /// everything. While the trim cuts, the shape draws its stroke: the fill of a cut-open
-    /// ring is not a shape any more.
+    /// ring is not a shape any more. Boxed: a rare feature that shouldn't grow every shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trim: Option<Trim>,
+    pub trim: Option<Box<Trim>>,
 }
 
 impl PartialEq for Shape {
@@ -627,17 +654,20 @@ pub struct Keyframe {
     /// script (ADR 0024). Rendering and exports ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script: Option<FrameScript>,
+    /// On an armature layer: the joint angles this keyframe poses the armature with (ADR 0043).
+    #[serde(default, skip_serializing_if = "Pose::is_empty")]
+    pub pose: Pose,
 }
 
 impl PartialEq for Keyframe {
     fn eq(&self, o: &Keyframe) -> bool {
-        self.start == o.start && self.duration == o.duration && self.tween == o.tween && self.motion == o.motion && self.hints == o.hints && self.label == o.label && self.sound == o.sound && self.script == o.script && arcs_eq(&self.elements, &o.elements)
+        self.start == o.start && self.duration == o.duration && self.tween == o.tween && self.motion == o.motion && self.hints == o.hints && self.label == o.label && self.sound == o.sound && self.script == o.script && self.pose == o.pose && arcs_eq(&self.elements, &o.elements)
     }
 }
 
 impl Keyframe {
     pub fn new(start: u32, duration: u32) -> Self {
-        Keyframe { start, duration: duration.max(1), elements: Vec::new(), tween: None, motion: None, hints: Vec::new(), label: String::new(), sound: None, script: None }
+        Keyframe { start, duration: duration.max(1), elements: Vec::new(), tween: None, motion: None, hints: Vec::new(), label: String::new(), sound: None, script: None, pose: Pose::default() }
     }
     /// Mutable access to the elements whose ids satisfy `pick`, cloning only those.
     pub fn elements_mut_where(&mut self, mut pick: impl FnMut(ElementId) -> bool) -> Vec<&mut Element> {
@@ -675,6 +705,9 @@ pub enum LayerKind {
     /// The camera (ADR 0027): at most one per scene timeline, always the top layer; its
     /// keyframes hold the camera, which views every other layer. Draws nothing itself.
     Camera,
+    /// An armature (ADR 0043): symbol instances joined by bones ([`Layer::armature`]), posed
+    /// on each keyframe ([`Keyframe::pose`]) and tweened between poses.
+    Armature,
 }
 
 impl LayerKind {
@@ -784,6 +817,9 @@ pub struct Layer {
     /// that is what an unselected switch is.
     #[serde(default, skip_serializing_if = "Channel::is_empty")]
     pub switch_to: Channel<String>,
+    /// An armature layer's bones (ADR 0043); `None` on every other kind of layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub armature: Option<Arc<Armature>>,
 }
 
 fn is_zero2(v: &Vec2) -> bool {
@@ -821,6 +857,10 @@ impl PartialEq for Layer {
             && self.flip_v == o.flip_v
             && self.origin == o.origin
             && self.camera_immune == o.camera_immune
+            && match (&self.armature, &o.armature) {
+                (Some(a), Some(b)) => arc_eq(a, b),
+                (a, b) => a.is_none() && b.is_none(),
+            }
             && arcs_eq(&self.keyframes, &o.keyframes)
             && self.opacity == o.opacity
             && self.filters == o.filters
@@ -863,6 +903,7 @@ impl Layer {
             filters: Vec::new(),
             skeleton: None,
             switch_to: Channel::default(),
+            armature: None,
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by
@@ -950,6 +991,11 @@ impl Layer {
             let mut fixed = (**s).clone();
             fixed.sanitize();
             self.skeleton = Some(Arc::new(fixed));
+        }
+        if let Some(a) = self.armature.as_ref() {
+            let mut fixed = (**a).clone();
+            fixed.sanitize();
+            self.armature = Some(Arc::new(fixed));
         }
     }
     /// The gain this layer gives its sounds: its volume, or silence when muted.
@@ -1420,6 +1466,9 @@ pub struct Document {
     /// The document's named styles ([`Style`]); shapes painted inline keep their own paints.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub styles: Vec<Arc<Style>>,
+    /// The Library's folders and which folder each item is in (ADR 0050).
+    #[serde(default, skip_serializing_if = "library_tree_is_empty")]
+    pub library_tree: Arc<LibraryTree>,
     /// The class scripts run the main timeline as (Animate's "document class"), kept as text
     /// (ADR 0013 tier 1); empty when there is none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -1450,7 +1499,10 @@ struct DocumentFile {
     #[serde(default)]
     styles: Vec<Arc<Style>>,
     #[serde(default)]
+    library_tree: Arc<LibraryTree>,
+    #[serde(default)]
     document_class: String,
+    #[serde(default)]
     maop_maohou: Option<Arc<MaohouSidecar>>,
     #[serde(default = "first_id")]
     next_id: u64,
@@ -1462,7 +1514,7 @@ impl From<DocumentFile> for Document {
         if let Some(tl) = f.timeline {
             scenes.insert(0, Arc::new(Scene { name: "Scene 1".into(), timeline: tl, ..Scene::new("") }));
         }
-        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, styles: f.styles, document_class: f.document_class, maop_maohou: f.maop_maohou, next_id: f.next_id }
+        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, library_tree: f.library_tree, styles: f.styles, document_class: f.document_class, maop_maohou: f.maop_maohou, next_id: f.next_id }
     }
 }
 
@@ -1470,18 +1522,22 @@ fn first_id() -> u64 {
     1
 }
 
+fn library_tree_is_empty(t: &Arc<LibraryTree>) -> bool {
+    t.is_empty()
+}
+
 /// What `timeline(i)` returns for a scene that does not exist (never for a sanitized document).
 static NO_TIMELINE: Timeline = Timeline { layers: Vec::new() };
 
 impl PartialEq for Document {
     fn eq(&self, o: &Document) -> bool {
-        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arcs_eq(&self.styles, &o.styles) && self.maop_maohou == o.maop_maohou
+        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arc_eq(&self.library_tree, &o.library_tree) && arcs_eq(&self.styles, &o.styles) && self.maop_maohou == o.maop_maohou
     }
 }
 
 impl Default for Document {
     fn default() -> Self {
-        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), styles: Vec::new(), document_class: String::new(), maop_maohou: None, next_id: 1 };
+        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Arc::default(), styles: Vec::new(), document_class: String::new(), maop_maohou: None, next_id: 1 };
         let id = LayerId(d.alloc_id());
         d.timeline_mut(0).layers.push(Arc::new(Layer::new(id, "Layer 1")));
         d
@@ -1557,6 +1613,9 @@ impl Document {
         let mut max_id = 0u64;
         let scan = |l: &Layer, max_id: &mut u64| {
             *max_id = (*max_id).max(l.id.0);
+            for b in l.armature.iter().flat_map(|a| &a.bones) {
+                *max_id = (*max_id).max(b.id.0);
+            }
             for k in &l.keyframes {
                 for e in &k.elements {
                     *max_id = (*max_id).max(e.id.0);
@@ -1578,6 +1637,7 @@ impl Document {
                 Arc::make_mut(l).sanitize_channels();
                 sanitize_scripts(l);
                 sanitize_depth(l);
+                sanitize_armature(l);
                 scan(l, &mut max_id);
             }
             tl.repair_masks();
@@ -1608,6 +1668,7 @@ impl Document {
                     Arc::make_mut(l).kind = LayerKind::Normal;
                 }
                 sanitize_depth(l);
+                sanitize_armature(l);
                 scan(l, &mut max_id);
             }
             tl.repair_masks();
@@ -1628,6 +1689,7 @@ impl Document {
                 name.name = format!("Style {}", i + 1);
             }
         }
+        self.sanitize_library_tree(&mut max_id);
         self.next_id = self.next_id.max(max_id.saturating_add(1));
     }
 }
@@ -1637,6 +1699,36 @@ fn sanitize_depth(layer: &mut Arc<Layer>) {
     let d = camera::clamp_depth(layer.depth);
     if d.to_bits() != layer.depth.to_bits() {
         Arc::make_mut(layer).depth = d;
+    }
+}
+
+/// Repairs a loaded layer's armature (ADR 0043): only an armature layer has one, its bones are
+/// sane and ordered, and its keyframes' poses are finite. Touches only what needs it.
+fn sanitize_armature(layer: &mut Arc<Layer>) {
+    let is_armature = layer.kind == LayerKind::Armature;
+    // (A pose on another layer's keyframe, pasted from an armature, is kept and plays no part.)
+    if !is_armature {
+        if layer.armature.is_some() {
+            Arc::make_mut(layer).armature = None;
+        }
+        return;
+    }
+    if let Some(a) = &layer.armature {
+        let mut fixed = (**a).clone();
+        if fixed.sanitize() {
+            Arc::make_mut(layer).armature = Some(Arc::new(fixed));
+        }
+    }
+    let bad = |k: &Keyframe| {
+        let mut p = k.pose.clone();
+        p.sanitize()
+    };
+    if layer.keyframes.iter().any(|k| bad(k)) {
+        for k in &mut Arc::make_mut(layer).keyframes {
+            if bad(k) {
+                Arc::make_mut(k).pose.sanitize();
+            }
+        }
     }
 }
 

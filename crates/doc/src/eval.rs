@@ -37,6 +37,9 @@ pub struct DisplayItem {
     pub group: Option<u32>,
     /// The decoded pixels a [`Paint::Bitmap`] fill shows (shared, never copied).
     pub image: Option<Arc<crate::Pixels>>,
+    /// Whether `image` is filtered between its pixels (the bitmap's Allow Smoothing, ADR 0050);
+    /// off, each pixel is a hard-edged square.
+    pub smooth: bool,
 }
 
 /// Back-to-front list of shapes.
@@ -127,6 +130,25 @@ pub fn evaluate_scene(doc: &Document, scene: usize, frame: u32) -> DisplayList {
     out
 }
 
+/// A symbol's timeline at its own `frame`, in the symbol's space, as the stage edits it while the
+/// symbol is open for editing (ADR 0045): what picking and bounds use then. Its layers are the
+/// top-level ones, as a scene's are in [`evaluate_scene`].
+pub fn evaluate_timeline(doc: &Document, tl: &Timeline, frame: u32) -> DisplayList {
+    let mut out = DisplayList::default();
+    eval_timeline(doc, tl, frame, &Ctx::top(Affine::IDENTITY), &mut out, None);
+    out
+}
+
+/// [`evaluate_timeline`] placed by `xf` (symbol space to stage space): what an instance of the
+/// timeline at `xf` shows, but with the timeline's own layers as the top-level ones, so each item
+/// still says which of them it is on. The stage draws a symbol open in place this way when onion
+/// skin or Edit Multiple Frames composes its frames (ADR 0051).
+pub fn evaluate_timeline_at(doc: &Document, tl: &Timeline, frame: u32, xf: Affine) -> DisplayList {
+    let mut out = DisplayList::default();
+    eval_timeline(doc, tl, frame, &Ctx::top(xf), &mut out, None);
+    out
+}
+
 /// Scene `scene` at its own `frame` as the movie shows it: through the scene's camera, each
 /// layer shifted by its depth, the camera's tint over everything (ADR 0027). Without a camera
 /// this is [`evaluate_scene`].
@@ -196,7 +218,19 @@ pub fn evaluate_layer_elements(layer: &Layer, frame: u32) -> Option<(u32, Cow<'_
 /// [`evaluate_layer_elements`] with a motion guide: tweened elements travel along `guide` (in
 /// the layer's own space) from the point nearest their start to the point nearest their end,
 /// turning with it when the tween orients to the path.
+///
+/// On an armature layer (ADR 0043) the instances are then placed by the pose at the frame
+/// (tweened between pose keyframes): forward kinematics from the root's own transform.
 pub fn evaluate_guided<'a>(layer: &'a Layer, frame: u32, guide: Option<&PathWalk>) -> Option<(u32, Cow<'a, [Arc<Element>]>)> {
+    let (start, els) = evaluate_tweened(layer, frame, guide)?;
+    let Some(arm) = layer.armature.as_deref().filter(|a| layer.kind == crate::LayerKind::Armature && !a.is_empty()) else { return Some((start, els)) };
+    let pose = crate::armature::pose_at(layer, frame).unwrap_or_default();
+    let mut els = els.into_owned();
+    crate::armature::apply(arm, &mut els, &pose);
+    Some((start, Cow::Owned(els)))
+}
+
+fn evaluate_tweened<'a>(layer: &'a Layer, frame: u32, guide: Option<&PathWalk>) -> Option<(u32, Cow<'a, [Arc<Element>]>)> {
     let idx = layer.keyframe_index_at(frame)?;
     let kf = layer.keyframes.get(idx)?;
     // A motion tween: its target follows the property curves (and its motion path, ADR 0030);
@@ -610,6 +644,10 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
                         Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
                         _ => None,
                     };
+                    let smooth = match &fill {
+                        Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).is_none_or(|b| b.smoothing),
+                        _ => true,
+                    };
                     out.items.push(DisplayItem {
                         path,
                         transform: xf,
@@ -625,6 +663,7 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
                         guide,
                         group,
                         image,
+                        smooth,
                     })
                 }
                 ElementKind::Text(t) => {
@@ -643,6 +682,7 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
                         guide,
                         group,
                         image: None,
+                        smooth: true,
                     };
                     // The glyphs draw filled, and a stroked text draws its outline over the
                     // fill, centred on the glyph edge (Moho's text stroke; ADR 0105).

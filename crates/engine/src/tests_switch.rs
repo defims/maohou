@@ -125,7 +125,7 @@ fn stage5_fields_round_trip_through_the_native_format() {
     let mut t = Trim::default();
     t.start.set_key(0, -0.1);
     t.end.set_key(5, 0.5);
-    shape.trim = Some(t);
+    shape.trim = Some(Box::new(t));
     let el = anicraft_doc::Element { id: anicraft_doc::ElementId(s.doc.alloc_id()), name: String::new(), transform: anicraft_geom::Affine::IDENTITY, color: anicraft_doc::ColorEffect::default(), kind: anicraft_doc::ElementKind::Shape(shape) };
     let l = s.doc.timeline_mut(0).layers.last().unwrap();
     let mut k = (*l.keyframes[0]).clone();

@@ -215,16 +215,16 @@ fn undoable_bulk_deletions_ask_but_are_not_blocked() {
 fn copy_paste_cut_and_paste_in_place() {
     let mut s = Session::default();
     run(&mut s, "draw.rect", json!({"x": 10, "y": 10, "w": 20, "h": 20}));
-    let orig = s.selection[0];
+    let orig = s.selection.ids().next().unwrap();
     run(&mut s, "edit.copy", json!({}));
     run(&mut s, "edit.paste", json!({}));
     let els = s.visible_elements();
     assert_eq!(els.len(), 2);
-    assert_ne!(s.selection[0], orig, "pasted elements get fresh ids");
-    let pasted = els.iter().find(|e| e.id == s.selection[0]).unwrap();
+    assert_ne!(s.selection.ids().next().unwrap(), orig, "pasted elements get fresh ids");
+    let pasted = els.iter().find(|e| e.id == s.selection.ids().next().unwrap()).unwrap();
     assert_eq!(pasted.transform.translation(), Vec2::new(30.0, 30.0));
     run(&mut s, "edit.paste_in_place", json!({}));
-    let last = s.visible_elements().into_iter().find(|e| e.id == s.selection[0]).unwrap();
+    let last = s.visible_elements().into_iter().find(|e| e.id == s.selection.ids().next().unwrap()).unwrap();
     assert_eq!(last.transform.translation(), Vec2::new(20.0, 20.0));
     // paste centred on a point
     run(&mut s, "edit.paste", json!({"x": 500, "y": 400}));
@@ -241,12 +241,17 @@ fn copy_paste_cut_and_paste_in_place() {
 fn clipboard_carries_symbols_into_another_document() {
     let mut s = Session::new(sample::demo());
     run(&mut s, "layer.select", json!({"index": 0}));
+    // Select All takes every unlocked layer's artwork (ADR 0044).
     run(&mut s, "edit.select_all", json!({}));
-    run(&mut s, "edit.copy", json!({}));
+    let copied = run(&mut s, "edit.copy", json!({}));
+    let used = s.doc.library.len();
     run(&mut s, "file.new", json!({"confirm": true}));
     assert!(s.doc.library.is_empty());
     run(&mut s, "edit.paste_in_place", json!({}));
-    assert_eq!(s.doc.library.len(), 1, "the Ball symbol came along");
+    assert!(s.doc.library.iter().any(|x| x.name == "Ball"), "the Ball symbol came along");
+    assert_eq!(s.doc.library.len(), used);
+    // Each copied layer lands on a layer of its own, made for it here.
+    assert_eq!(s.doc.timeline(0).layers.len() as u64, copied["layers"].as_u64().unwrap());
     assert!(!anicraft_doc::evaluate(&s.doc, 0).items.is_empty(), "and it renders");
     let ids: Vec<u64> = s.doc.library.iter().map(|x| x.id.0).collect();
     assert!(s.doc.next_id > *ids.iter().max().unwrap());
@@ -280,10 +285,10 @@ fn align_and_distribute() {
     }
     run(&mut s, "edit.select_all", json!({}));
     run(&mut s, "align.left", json!({}));
-    let lefts: Vec<f32> = s.selection.iter().map(|id| s.element_bounds(*id).min.x).collect();
+    let lefts: Vec<f32> = s.selection.ids().map(|id| s.element_bounds(id).min.x).collect();
     assert!(lefts.iter().all(|x| (x - 10.0).abs() < 1e-3), "{lefts:?}");
     run(&mut s, "align.distribute_v", json!({}));
-    let mut ys: Vec<f32> = s.selection.iter().map(|id| s.element_bounds(*id).center().y).collect();
+    let mut ys: Vec<f32> = s.selection.ids().map(|id| s.element_bounds(id).center().y).collect();
     ys.sort_by(f32::total_cmp);
     assert!(((ys[1] - ys[0]) - (ys[2] - ys[1])).abs() < 1e-3, "{ys:?}");
     // a single element aligns to the stage
@@ -481,13 +486,13 @@ fn commands_png(s: &Session) -> Vec<u8> {
 fn pick_selects_topmost() {
     let mut s = Session::default();
     run(&mut s, "draw.rect", json!({"x": 0, "y": 0, "w": 100, "h": 100}));
-    let a = s.selection[0];
+    let a = s.selection.ids().next().unwrap();
     run(&mut s, "draw.rect", json!({"x": 50, "y": 50, "w": 100, "h": 100}));
-    let b = s.selection[0];
+    let b = s.selection.ids().next().unwrap();
     run(&mut s, "element.pick", json!({"x": 75, "y": 75}));
-    assert_eq!(s.selection, vec![b]);
+    assert_eq!(s.selection.ids().collect::<Vec<_>>(), vec![b]);
     run(&mut s, "element.pick", json!({"x": 10, "y": 10}));
-    assert_eq!(s.selection, vec![a]);
+    assert_eq!(s.selection.ids().collect::<Vec<_>>(), vec![a]);
     run(&mut s, "element.pick", json!({"x": 500, "y": 500}));
     assert!(s.selection.is_empty());
 }
@@ -522,7 +527,7 @@ fn moho_imports_round_trip_through_the_native_format() {
     for name in ["empty", "keyframes", "text", "switch"] {
         let path = dir.join(format!("{name}.moho"));
         let (doc, _) = anicraft_mohoproj_import::import_path(&path).unwrap_or_else(|e| panic!("{name}.moho: {e}"));
-        let back = format::from_json(&format::to_json(&doc).unwrap()).unwrap();
+        let back = format::from_json(&format::to_json(&doc).unwrap()).unwrap_or_else(|e| panic!("{name}.moho round trip: {e}"));
         assert_eq!(doc, back, "{name}.moho through save/load");
         assert!(back.maop_maohou.is_some(), "{name}: the sidecar survives");
     }
@@ -531,7 +536,7 @@ fn moho_imports_round_trip_through_the_native_format() {
 /// Adversarial params for every command: must return Ok or Err, never panic.
 #[test]
 fn panic_hunt_every_command() {
-    let hostile: Vec<Value> = vec![
+    let mut hostile: Vec<Value> = vec![
         Value::Null,
         json!({}),
         json!([]),
@@ -570,6 +575,12 @@ fn panic_hunt_every_command() {
         json!({"id": 3, "profile": [[0, 1e30, -5], ["x"], [0.5, 16, 16]], "index": u64::MAX, "t": -0.5, "left": 1e9, "width": f64::MAX}),
         json!({"id": 3, "profile": "taper_both", "index": 0, "t": 1, "x": 1e30, "y": -1e30, "left": 0, "right": 16}),
         json!({"profile": (0..500).map(|i| json!([f64::from(i) / 500.0, 2, 2])).collect::<Vec<_>>()}),
+        // Stroke styles (ADR 0046): junk, extremes and patterns that would be very fine.
+        json!({"cap": "none", "join": "miter", "miter": 100, "dash": [0, 1e-30], "dash_offset": -1e4, "style": "dashed"}),
+        json!({"cap": 7, "join": "mitre", "miter": f64::NAN, "dash": vec![1e4; 16], "dot_spacing": 0, "style": "dotted"}),
+        json!({"style": "dotted", "dot_spacing": 0, "x0": 0, "y0": 0, "x1": 1e6, "y1": 1, "stroke_width": 1000}),
+        json!({"dash": [0.001, 0.001], "x0": -1e6, "y0": 0, "x1": 1e6, "y1": 0, "x": 0, "y": 0}),
+        json!({"dash": "x", "cap": "square", "style": "ragged", "dash_offset": 1e30}),
         json!({"sound": SOUND, "sync": "stream", "repeat": 9999, "loop": true, "extend": true, "frame": 99_999}),
         json!({"sound": SOUND, "sync": "nope", "repeat": 0, "loop": "x", "name": ""}),
         json!({"sound": SOUND, "frame": 3, "extend": true, "name": "renamed"}),
@@ -603,10 +614,47 @@ fn panic_hunt_every_command() {
         json!({"points": [[0, 0], [40, 40], [90, 5]], "size": 30, "mode": "selected_fills", "x": 30, "y": 30, "slop": 0}),
         json!({"points": [[45, 45]], "size": 2000, "mode": "inside", "x": 45, "y": 45, "other": true, "fill": false, "stroke": true}),
         json!({"points": [[5, 5], [55, 55]], "size": 4, "mode": "lines", "shape": "square", "x": 1, "y": 1, "fill": "yes"}),
+        // The Selection tool on raw shapes (ADR 0041): corners and edges of the raw rectangles,
+        // stale and hostile point lists, huge snaps and marquees, segments that aren't there.
+        json!({"x": 30, "y": 30, "to_x": 1e7, "to_y": -1e7, "snap": 1e9, "merge": false, "dx": 1e7, "dy": -1e7}),
+        json!({"x": 60, "y": 45, "to_x": 30.1, "to_y": 30, "snap": 10, "points": [[1, 99_999], [u64::MAX, 0]], "cmd": 1, "t": 2}),
+        json!({"x": 45, "y": 30, "dx": 5, "dy": 5, "cmd": u64::MAX, "t": f64::NAN, "id": 2, "slop": 1e9}),
+        json!({"x0": 10, "y0": 10, "x1": 45, "y1": 75, "add": true, "from": [1, 2, 3], "snap": 3}),
+        json!({"x0": -1e7, "y0": 1e7, "x1": 1e7, "y1": -1e7, "add": false, "from": [45, 45], "snap": 0.2}),
+        json!({"x0": 30, "y0": 30, "x1": 30, "y1": 30, "point_slop": -5, "ids": [u64::MAX], "points": "x"}),
+        // Subselection on raw shapes (ADR 0042): handles that aren't there or move too far,
+        // anchors to move along that are hostile, connected sets of anything.
+        json!({"id": 3, "cmd": 1, "slot": 2, "dx": 1e30, "dy": 0, "x": 30, "y": 30, "to_x": 31, "to_y": 30, "with": [[30, 30], [1e30, 0]]}),
+        json!({"id": 5, "cmd": u64::MAX, "slot": 9, "dx": 1, "dy": 1, "with": "x", "x0": 0, "y0": 0, "x1": 1e9, "y1": 1e9}),
+        json!({"id": 4, "cmd": 2, "slot": 1, "dx": -3, "dy": 2, "x": 60, "y": 60, "to_x": 61, "to_y": 61, "with": [[60, 60], [30, 90], [90, 30]], "merge": false}),
         // Kept scripts (ADR 0013 tier 1): odd text, unknown languages, class names that aren't.
         json!({"text": "\u{0}\r\n]]>\u{202e}stop();", "language": "other", "class": "a.b", "base": "c", "symbol": 1}),
         json!({"text": "x".repeat(1 << 20), "language": 3, "class": "not a class", "base": ""}),
         json!({"text": "", "language": "ActionScript3", "class": "", "base": "Orphan"}),
+        // Bones (ADR 0043): the rigged session's bones are 100 and 102 (its armature layer 101),
+        // its instances 10–12.
+        json!({"bone": 102, "x": 1e30, "y": -1e30, "local": [1e9, "a"], "frame": 99_999}),
+        json!({"bone": 102, "x": 0, "y": 0, "local": [f64::MAX, 0], "angle": 1e9, "rotate_by": -1e9, "dx": 1e7, "dy": -1e7}),
+        json!({"bone": 100, "min": 400, "max": -400, "constrain": true, "pinned": "x"}),
+        json!({"bone": 100, "min": 10, "max": 10, "constrain": "yes", "pinned": true, "x": 250, "y": 250}),
+        json!({"from": 10, "to": 12, "head": [0, 0], "tail": [1e30, 0], "name": "x".repeat(300)}),
+        json!({"from": 12, "to": 10, "head": [5], "tail": "x", "bone": u64::MAX}),
+        json!({"from": 11, "to": 13, "head": [-1e6, 1e6], "layer": 101}),
+        // Edit Multiple Frames (ADR 0047): ranges past the end or reversed, items that aren't
+        // there or aren't triples, moves at the limits.
+        json!({"first": 0, "last": 99_999, "dx": 1e7, "dy": -1e7, "items": [[0, 0, 1], "x", [u64::MAX, u64::MAX, u64::MAX]]}),
+        json!({"first": u64::MAX, "last": 0, "dx": 5, "dy": 5, "items": []}),
+        json!({"first": 40, "last": 0, "dx": 3, "dy": -2}),
+        json!({"first": 0, "last": 100_001, "dx": f64::NAN, "dy": 0, "items": [[1, 2]]}),
+        // Edit Multiple Frames, complete (ADR 0051): transforms at the limits, pivots and edges
+        // that aren't, pastes onto ranges with nothing in them, merges of what isn't raw.
+        json!({"first": 0, "last": 99_999, "a": 0, "b": 0, "c": 0, "d": 0, "e": 1e30, "f": 0, "merge": "x"}),
+        json!({"first": 0, "last": 50, "a": 1e9, "b": 1, "c": 1, "d": 1e-9, "e": 0, "f": f64::NAN}),
+        json!({"first": 0, "last": 50, "rotate": 1e9, "scale_x": 1e-9, "scale_y": -1e9, "skew_x": 90, "skew_y": -90, "pivot": [1e30, 0]}),
+        json!({"first": 0, "last": 50, "rotate": 45, "skew_x": 89.999, "pivot": [5], "edge": "nope", "to_stage": "x"}),
+        json!({"first": 0, "last": 50, "scale_x": -1, "pivot": [0, 0], "edge": "vcenter", "to_stage": true, "merge": false}),
+        json!({"first": 3, "last": 1, "edge": "right", "layer": u64::MAX, "items": [[0, 0, 0]]}),
+        json!({"first": 0, "last": 99_999, "layer": 0, "items": (0..200).map(|i| json!([i, i, i])).collect::<Vec<_>>()}),
     ];
     // File commands are exercised separately (they touch the disk).
     let skip = |id: &str| id.starts_with("file.");
@@ -640,7 +688,84 @@ fn panic_hunt_every_command() {
     for p in [json!({"x": 0, "y": 0, "w": 60, "h": 60}), json!({"x": 30, "y": 30, "w": 60, "h": 60, "fill": "#ff0000"}), json!({"x": 1, "y": 1, "w": 10, "h": 10, "radius": 5})] {
         raw.execute("draw.rect", &p).unwrap();
     }
-    for start in [Session::default(), Session::new(sample::demo()), Session::new(with_sound), on_path, raw] {
+    // An armature: two bones, posed at two frames with a limit and a pin (ADR 0043).
+    let (mut rig, b1, b2) = crate::tests_bone::rigged();
+    for (id, p) in [("bone.pose", json!({"bone": b1, "angle": 30, "frame": 8})), ("bone.set_limits", json!({"bone": b2, "min": -30, "max": 30})), ("bone.pin", json!({"bone": b1, "pinned": true}))] {
+        rig.execute(id, &p).unwrap();
+    }
+    assert_eq!((b1, b2), (100, 102), "the hostile params name these bones");
+    rig.set_frame(4);
+    // Raw drawings and an object on two layers, selected on both through a marquee's cut that
+    // is still provisional (ADR 0041, 0044).
+    let mut layered = Session::default();
+    layered.style.object_drawing = false;
+    for (id, p) in [
+        ("draw.rect", json!({"x": 0, "y": 0, "w": 60, "h": 60})),
+        ("layer.new", json!({})),
+        ("draw.rect", json!({"x": 30, "y": 30, "w": 60, "h": 60, "fill": "#ff0000"})),
+        ("draw.rect", json!({"x": 200, "y": 0, "w": 20, "h": 20, "object": true})),
+        ("raw.select_rect", json!({"x0": 20, "y0": 20, "x1": 250, "y1": 50})),
+    ] {
+        layered.execute(id, &p).unwrap();
+    }
+    assert_eq!(layered.selected_layers().len(), 2, "the fuzz starts with a selection on two layers");
+    // Raw drawings inside a symbol open for editing in place (ADR 0045), with a point added.
+    let mut in_symbol = Session::default();
+    in_symbol.style.object_drawing = false;
+    for (id, p) in [
+        ("draw.rect", json!({"x": 0, "y": 0, "w": 60, "h": 60})),
+        ("modify.convert_to_symbol", json!({"name": "Inner"})),
+        ("element.translate", json!({"dx": 30, "dy": 15})),
+        ("symbol.edit", json!({})),
+        ("draw.rect", json!({"x": 30, "y": 30, "w": 60, "h": 60, "fill": "#ff0000"})),
+        ("raw.add_point", json!({"x": 45, "y": 90})),
+    ] {
+        in_symbol.execute(id, &p).unwrap();
+    }
+    assert_eq!(in_symbol.editing.len(), 1, "the fuzz starts inside a symbol");
+    // Raw drawings on several keyframes, artwork copied from two of them (ADR 0051).
+    let mut keyed = Session::default();
+    keyed.style.object_drawing = false;
+    for (id, p) in [
+        ("draw.rect", json!({"x": 0, "y": 0, "w": 60, "h": 60})),
+        ("draw.rect", json!({"x": 100, "y": 0, "w": 60, "h": 60, "fill": "#ff0000"})),
+        ("timeline.goto", json!({"frame": 4})),
+        ("timeline.insert_keyframe", json!({})),
+        ("timeline.goto", json!({"frame": 8})),
+        ("timeline.insert_keyframe", json!({})),
+        ("frames.copy", json!({"first": 0, "last": 8})),
+        ("timeline.goto", json!({"frame": 4})),
+    ] {
+        keyed.execute(id, &p).unwrap();
+    }
+    // Library folders, nested, with items in them (ADR 0050); the fuzz moves, renames and
+    // deletes them, folders into themselves, names that clash or hold a slash.
+    let mut library = Session::new(sample::demo());
+    let outer = library.execute("library.new_folder", &json!({"name": "Characters"})).unwrap()["folder"].as_u64().unwrap();
+    let inner = library.execute("library.new_folder", &json!({"name": "Hero", "parent": outer})).unwrap()["folder"].as_u64().unwrap();
+    let ball = library.doc.library.first().map(|x| x.id.0).unwrap();
+    library.execute("library.move", &json!({"items": [{"symbol": ball}], "to": inner})).unwrap();
+    library.execute("library.duplicate", &json!({"symbol": ball})).unwrap();
+    // ...and a bitmap placed on the stage, for Swap Bitmap (ADR 0053).
+    let bm = anicraft_doc::BitmapId(library.doc.alloc_id());
+    let png = anicraft_render::encode_png(3, 2, &[0, 0, 255, 255].repeat(6)).unwrap();
+    library.doc.bitmaps.push(Arc::new(anicraft_doc::Bitmap::from_png(bm, "b.png", png).unwrap()));
+    library.execute("library.place", &json!({"bitmap": bm.0})).unwrap();
+    hostile.push(json!({"bitmap": bm.0, "items": [{"bitmap": bm.0}, {"symbol": ball}], "x": 3, "y": 4}));
+    hostile.extend([
+        json!({"items": [{"folder": outer}], "to": inner, "folder": outer, "name": "Hero", "parent": inner, "confirm": true}),
+        json!({"items": [{"folder": inner}, {"symbol": ball}, {"folder": inner}], "to": null, "folder": inner, "name": "a/b", "symbol": ball}),
+        json!({"items": [{"symbol": ball, "folder": outer}, "x", {"sound": u64::MAX}], "to": u64::MAX, "parent": "x", "name": " "}),
+        json!({"items": (0..200).map(|i| json!({"folder": i})).collect::<Vec<_>>(), "to": outer, "symbol": ball, "name": "x".repeat(300), "on": "x", "bitmap": 1}),
+        json!({"items": [{"symbol": ball}], "to": outer, "symbol": ball, "name": "Ball copy", "confirm": true}),
+        // Drops from the Library and Swap Bitmap (ADR 0053): mixed lists, two sounds, far points.
+        json!({"items": [{"symbol": ball}, {"sound": SOUND}, {"bitmap": u64::MAX}], "x": 1e300, "y": -1e300}),
+        json!({"items": [{"sound": SOUND}, {"sound": SOUND}, {"symbol": ball}], "x": 999_999, "y": -999_999, "bitmap": 0}),
+        json!({"items": [{"symbol": ball}, {"symbol": ball}, {"folder": inner}, null], "x": "a"}),
+        json!({"items": (0..1500).map(|_| json!({"symbol": ball})).collect::<Vec<_>>(), "x": 0, "y": 0}),
+        json!({"sound": SOUND, "symbol": ball, "x": 10, "y": 10}),
+    ]);
+    for start in [Session::default(), Session::new(sample::demo()), Session::new(with_sound), on_path, raw, rig, layered, in_symbol, keyed, library] {
         let mut s = start;
         for spec in commands().iter().filter(|c| !skip(c.id)) {
             for p in &hostile {
@@ -652,14 +777,20 @@ fn panic_hunt_every_command() {
                 let _ = s.execute(spec.id, p);
             }
         }
-        // The document must still evaluate and render.
+        // The document must still evaluate and render, and so must what the stage shows.
         for f in [0, 1, 5, 47, 1000] {
             let _ = anicraft_render::render_frame(&s.doc, f, 0.1);
         }
+        let pic = s.stage_picture();
+        let _ = anicraft_render::render_frame(&pic.doc, pic.frame, 0.1);
         // ...and its sounds lay out and mix.
         let voices = anicraft_doc::sound::voices(&s.doc, 8000);
         let mut out = vec![0.0; 2 * 4096];
         anicraft_doc::audio::mix(&voices, 8000, Default::default(), 0, &mut out);
+        // ...and its Library tree stays whole: nothing a load would have to repair.
+        let mut loaded = s.doc.clone();
+        loaded.sanitize();
+        assert_eq!(loaded.library_tree, s.doc.library_tree);
     }
 }
 
@@ -866,7 +997,7 @@ fn moving_an_anchor_brings_its_handles_and_is_one_undo_step_in_a_gesture() {
 fn moves_follow_the_element_transform() {
     let mut s = Session::default();
     run(&mut s, "draw.rect", json!({"x": 0, "y": 0, "w": 100, "h": 100}));
-    let id = s.selection[0].0;
+    let id = s.selection.ids().next().unwrap().0;
     run(&mut s, "element.set_transform", json!({"sx": 2, "rotation": 90}));
     let a0 = stage_anchor(&s, id, 0);
     run(&mut s, "path.move_points", json!({"id": id, "points": [[0, 0]], "dx": 10, "dy": 0}));
@@ -877,7 +1008,7 @@ fn moves_follow_the_element_transform() {
 fn add_delete_and_convert_points() {
     let mut s = Session::default();
     run(&mut s, "draw.rect", json!({"x": 0, "y": 0, "w": 100, "h": 100}));
-    let id = s.selection[0].0;
+    let id = s.selection.ids().next().unwrap().0;
     let area = |s: &Session| shape_path(s, id).flatten(&anicraft_geom::Affine::IDENTITY, 0.1)[0].points.len();
     let n0 = shape_path(&s, id).editable_anchors().len();
     // The closing edge (left side, x = 0) can take a point too.
@@ -899,7 +1030,7 @@ fn add_delete_and_convert_points() {
     assert!(s.execute("path.delete_points", &json!({"id": id, "cmds": [0]})).is_err());
     // Symbols are not point-editable.
     run(&mut s, "modify.convert_to_symbol", json!({}));
-    let inst = s.selection[0].0;
+    let inst = s.selection.ids().next().unwrap().0;
     assert!(s.execute("path.add_point", &json!({"id": inst, "x": 0, "y": 0})).is_err());
 }
 
@@ -1202,7 +1333,7 @@ fn opening_an_xfl_folder_imports_it_untitled() {
         let text = s.doc.timeline(s.scene).layers[0].keyframes[0].elements.iter().find(|e| matches!(e.kind, ElementKind::Text(_))).cloned().expect("a text element");
         assert_eq!(text.name, "title");
         assert!(dl.items.iter().any(|i| matches!(i.fill, Some(anicraft_doc::Paint::Solid(c)) if c == anicraft_doc::Rgba::hex(0x0000ff))), "the text renders");
-        s.selection = vec![text.id];
+        s.select_only([text.id]);
         run(&mut s, "text.edit", json!({"text": "Hello again"}));
         // Saved and opened again, it is the same text.
         let file = dir.join("imported.anicraft");
@@ -1761,9 +1892,10 @@ fn images_import_as_bitmaps_render_save_and_export() {
     run(&mut s, "edit.select_all", json!({}));
     run(&mut s, "edit.duplicate", json!({}));
     let svg = crate::cmds_file::frame_svg(&s.doc, 0);
-    // Two images, three instances (the JPEG one was duplicated): each image is embedded once.
+    // Two images, four instances (Select All took both layers, ADR 0044): each image is
+    // embedded once.
     assert_eq!(svg.matches("data:image/png;base64,").count(), 2);
-    assert_eq!(svg.matches("<pattern ").count(), 3);
+    assert_eq!(svg.matches("<pattern ").count(), 4);
     // Undo takes an import back, bitmap and all.
     let n = s.doc.bitmaps.len();
     s.undo().unwrap();
@@ -1788,7 +1920,7 @@ fn library_bitmaps_place_centred_on_the_stage() {
     // Placing it again from the Library adds a second picture, centred, on the current layer.
     let v = run(&mut s, "library.place", json!({"bitmap": bitmap, "x": 100, "y": 50}));
     let id = anicraft_doc::ElementId(v["element"].as_u64().unwrap());
-    assert_eq!(s.selection, vec![id]);
+    assert_eq!(s.selection.ids().collect::<Vec<_>>(), vec![id]);
     let el = s.active_layer().unwrap().keyframe_at(s.frame).unwrap().elements.iter().find(|e| e.id == id).unwrap().clone();
     assert_eq!(el.name, "dot.png");
     assert_eq!(el.transform.apply(anicraft_geom::Vec2::new(3.0, 2.0)), anicraft_geom::Vec2::new(100.0, 50.0), "centred on x/y");
@@ -1876,7 +2008,7 @@ fn text_lays_out_renders_edits_saves_and_breaks_apart() {
     let mut s = Session::default();
     let v = run(&mut s, "text.create", json!({"text": "Hello", "x": 100, "y": 50, "size": 64, "color": "#cc2200"}));
     let id = ElementId(v["element"].as_u64().unwrap());
-    assert_eq!(s.selection, vec![id]);
+    assert_eq!(s.selection.ids().collect::<Vec<_>>(), vec![id]);
     assert!(v["width"].as_f64().unwrap() > 64.0);
     let text = |s: &Session| match &s.visible_elements().iter().find(|e| e.id == id).unwrap().kind {
         ElementKind::Text(t) => t.clone(),
@@ -1930,7 +2062,7 @@ fn text_lays_out_renders_edits_saves_and_breaks_apart() {
     run(&mut s, "element.select", json!({"ids": [id.0]}));
     let before = anicraft_render::render_frame(&s.doc, 0, 1.0).unwrap();
     run(&mut s, "modify.break_apart", json!({}));
-    assert!(matches!(s.visible_elements().iter().find(|e| s.selection.contains(&e.id)).unwrap().kind, ElementKind::Shape(_)));
+    assert!(matches!(s.visible_elements().iter().find(|e| s.selection.has_id(e.id)).unwrap().kind, ElementKind::Shape(_)));
     assert_eq!(anicraft_render::render_frame(&s.doc, 0, 1.0).unwrap().data, before.data, "a shape exactly like the text");
     let fonts = run(&mut s, "text.fonts", json!({}));
     assert!(fonts["families"].as_array().is_some_and(|f| !f.is_empty()));

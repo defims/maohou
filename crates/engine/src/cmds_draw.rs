@@ -1,8 +1,8 @@
 //! Drawing, selection, element and symbol commands.
 
 use crate::params::*;
-use crate::{CommandSpec, EngineError, Result, Session};
-use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Layer, LayerId, LoopMode, Paint, Shape, Stroke, Symbol, SymbolId, SymbolKind, Timeline};
+use crate::{CommandSpec, EngineError, Result, Selection, Session};
+use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Layer, LayerId, LibraryEntry, LibraryItem, LoopMode, Paint, Shape, Stroke, Symbol, SymbolId, SymbolKind, Timeline};
 use anicraft_geom::{Affine, Decomposed, Path, Vec2};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -10,37 +10,38 @@ use std::sync::Arc;
 pub fn specs() -> Vec<CommandSpec> {
     let c = |id, label, menu, shortcut, params, mutates, run| CommandSpec { id, label, menu, shortcut, params, mutates, run };
     vec![
-        c("draw.rect", "Rectangle", "", None, "{x, y, w, h, radius?, fill?, stroke?, stroke_width?, profile?, object?}", true, draw_rect as crate::RunFn),
-        c("draw.ellipse", "Oval", "", None, "{x, y, w, h, fill?, stroke?, stroke_width?, profile?, object?}", true, draw_ellipse),
-        c("draw.star", "PolyStar", "", None, "{cx, cy, outer, inner?, points?, fill?, stroke?, profile?, object?}", true, draw_star),
-        c("draw.line", "Line", "", None, "{x0, y0, x1, y1, stroke?, stroke_width?, profile? (a width profile name or [[t, left, right], ..]), object? (true: a drawing object; default: Object Drawing, off: it merges with the raw shapes it touches)}", true, draw_line),
+        c("draw.rect", "Rectangle", "", None, "{x, y, w, h, radius?, fill?, stroke?, stroke_width?, profile?, cap?, join?, style?, dash?, object?}", true, draw_rect as crate::RunFn),
+        c("draw.ellipse", "Oval", "", None, "{x, y, w, h, fill?, stroke?, stroke_width?, profile?, cap?, join?, style?, dash?, object?}", true, draw_ellipse),
+        c("draw.star", "PolyStar", "", None, "{cx, cy, outer, inner?, points?, fill?, stroke?, profile?, cap?, join?, style?, dash?, object?}", true, draw_star),
+        c("draw.line", "Line", "", None, "{x0, y0, x1, y1, stroke?, stroke_width?, profile? (a width profile name or [[t, left, right], ..]), cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (the line style, as stroke.set_style; default: the tool's), object? (true: a drawing object; default: Object Drawing, off: it merges with the raw shapes it touches)}", true, draw_line),
         c("draw.object_drawing", "Object Drawing", "", Some("J"), "{on?: bool} (default: toggle)", false, object_drawing),
+        c("draw.snap_to_objects", "Snap to Objects", "View/Snapping", Some("Ctrl+Shift+/"), "{on?: bool} (default: toggle) dragged points and selections, and the points the Line, Rectangle, Oval, PolyStar and Pen tools draw, snap to points, lines and fill edges (the `snap` params of element.translate, raw.move_point, raw.move_handle and draw.snap do nothing while it is off)", false, snap_to_objects),
         c("edit.select_all", "Select All", "Edit", Some("Ctrl+A"), "{}", false, select_all),
         c("edit.deselect", "Deselect All", "Edit", Some("Ctrl+Shift+A"), "{}", false, |s, _| {
             s.selection.clear();
             Ok(json!({"selected": 0}))
         }),
-        c("edit.delete", "Clear", "Edit", Some("Delete"), "{}", true, delete),
-        c("edit.duplicate", "Duplicate", "Edit", Some("Ctrl+D"), "{dx?, dy?}", true, duplicate),
-        c("element.select", "Select Elements", "", None, "{ids: [..], add?: bool}", false, select),
-        c("element.pick", "Select at Point", "", None, "{x, y, add?: bool}", false, pick),
-        c("element.translate", "Move", "", None, "{dx, dy}", true, translate),
-        c("element.set_transform", "Transform", "", None, "{x?, y?, sx?, sy?, rotation? (degrees)}", true, set_transform),
-        c("element.set_fill", "Fill Colour", "", None, "{color: \"#rrggbb\" | null}", true, set_fill),
-        c("element.set_stroke", "Stroke", "", None, "{color?: \"#rrggbb\" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..]}", true, set_stroke),
-        c("element.set_alpha", "Alpha", "", None, "{alpha: 0..1}", true, set_alpha),
-        c("element.set_blend", "Blending", "", None, "{mode: normal|layer|darken|multiply|lighten|screen|overlay|hardlight|add|subtract|difference|invert|alpha|erase} on the selected movie clip and button instances", true, set_blend),
-        c("element.set_filters", "Filters", "", None, "{filters: [{type: blur|drop_shadow|glow|bevel|gradient_glow|gradient_bevel|adjust_color, …values}]} replaces the selected movie clip and button instances' filters (in order; [] removes them). Bevel: shadow_color, highlight_color, side: inner|outer|full, knockout; gradient filters: stops: [{offset 0..1, color \"#rrggbbaa\"}] (Gradient Glow's start and Gradient Bevel's middle stay transparent)", true, set_filters),
-        c("element.set_loop", "Looping", "", None, "{loop?: loop|play_once|single_frame, first_frame?}", true, set_loop),
-        c("symbol.set_kind", "Symbol Type", "", None, "{kind: graphic|movie_clip|button, symbol?: id (default: the selected instance's)}", true, set_symbol_kind),
-        c("element.rename", "Instance Name", "", None, "{name}", true, rename),
-        c("arrange.bring_to_front", "Bring to Front", "Modify/Arrange", Some("Ctrl+Shift+Up"), "{}", true, |s, _| arrange(s, true)),
-        c("arrange.bring_forward", "Bring Forward", "Modify/Arrange", Some("Ctrl+Up"), "{}", true, |s, _| arrange_step(s, true)),
-        c("arrange.send_backward", "Send Backward", "Modify/Arrange", Some("Ctrl+Down"), "{}", true, |s, _| arrange_step(s, false)),
-        c("arrange.send_to_back", "Send to Back", "Modify/Arrange", Some("Ctrl+Shift+Down"), "{}", true, |s, _| arrange(s, false)),
-        c("modify.convert_to_symbol", "Convert to Symbol…", "Modify", Some("F8"), "{name?}", true, convert_to_symbol),
-        c("modify.break_apart", "Break Apart", "Modify", Some("Ctrl+B"), "{}", true, break_apart),
-        c("library.place", "Place Instance", "", None, "{symbol | bitmap, x?, y?}", true, place),
+        c("edit.delete", "Clear", "Edit", Some("Delete"), "{} (on every layer with selected items)", true, delete_selection),
+        c("edit.duplicate", "Duplicate", "Edit", Some("Ctrl+D"), "{dx?, dy?} (each copy on its original's layer)", true, |s, p| s.each_layer(true, |s| duplicate(s, p))),
+        c("element.select", "Select Elements", "", None, "{ids: [..], add?: bool, layer?} selects elements on any visible, unlocked layer at the playhead (ids are unique; `layer` looks only there); the active layer becomes the first one's unless it has some of them", false, select),
+        c("element.pick", "Select at Point", "", None, "{x, y, add?: bool} the topmost element there on a visible, unlocked layer; `add` (Shift) adds it to the selection, or lets go of it, on any layer", false, pick),
+        c("element.translate", "Move", "", None, "{dx, dy, snap?, from?: [x, y]} moves the selection, on every layer; with `snap` (a distance) one of its corners or ends (the nearest to `from`) then snaps onto a point, line or fill edge of the rest within that distance", true, translate),
+        c("element.set_transform", "Transform", "", None, "{x?, y?, sx?, sy?, rotation? (degrees)}", true, |s, p| s.each_layer(true, |s| set_transform(s, p))),
+        c("element.set_fill", "Fill Colour", "", None, "{color: \"#rrggbb\" | null}", true, |s, p| s.each_layer(false, |s| set_fill(s, p))),
+        c("element.set_stroke", "Stroke", "", None, "{color?: \"#rrggbb\" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}", true, |s, p| s.each_layer(false, |s| set_stroke(s, p))),
+        c("element.set_alpha", "Alpha", "", None, "{alpha: 0..1}", true, |s, p| s.each_layer(true, |s| set_alpha(s, p))),
+        c("element.set_blend", "Blending", "", None, "{mode: normal|layer|darken|multiply|lighten|screen|overlay|hardlight|add|subtract|difference|invert|alpha|erase} on the selected movie clip and button instances", true, |s, p| s.each_layer(false, |s| set_blend(s, p))),
+        c("element.set_filters", "Filters", "", None, "{filters: [{type: blur|drop_shadow|glow|bevel|gradient_glow|gradient_bevel|adjust_color, …values}]} replaces the selected movie clip and button instances' filters (in order; [] removes them). Bevel: shadow_color, highlight_color, side: inner|outer|full, knockout; gradient filters: stops: [{offset 0..1, color \"#rrggbbaa\"}] (Gradient Glow's start and Gradient Bevel's middle stay transparent)", true, |s, p| s.each_layer(false, |s| set_filters(s, p))),
+        c("element.set_loop", "Looping", "", None, "{loop?: loop|play_once|single_frame, first_frame?}", true, |s, p| s.each_layer(false, |s| set_loop(s, p))),
+        c("symbol.set_kind", "Symbol Type", "", None, "{kind: graphic|movie_clip|button, symbol?: id (default: the symbols of every selected instance)}", true, set_symbol_kind),
+        c("element.rename", "Instance Name", "", None, "{name}", true, |s, p| s.each_layer(true, |s| rename(s, p))),
+        c("arrange.bring_to_front", "Bring to Front", "Modify/Arrange", Some("Ctrl+Shift+Up"), "{} (within each layer)", true, |s, _| s.each_layer(true, |s| arrange(s, true))),
+        c("arrange.bring_forward", "Bring Forward", "Modify/Arrange", Some("Ctrl+Up"), "{} (within each layer)", true, |s, _| s.each_layer(true, |s| arrange_step(s, true))),
+        c("arrange.send_backward", "Send Backward", "Modify/Arrange", Some("Ctrl+Down"), "{} (within each layer)", true, |s, _| s.each_layer(true, |s| arrange_step(s, false))),
+        c("arrange.send_to_back", "Send to Back", "Modify/Arrange", Some("Ctrl+Shift+Down"), "{} (within each layer)", true, |s, _| s.each_layer(true, |s| arrange(s, false))),
+        c("modify.convert_to_symbol", "Convert to Symbol…", "Modify", Some("F8"), "{name? (default: the next free “Symbol n”; a name the folder holds gets a number), kind?: graphic|movie_clip|button (default: graphic), folder?: Library folder id (default: the top level)} → {symbol, instance, name, layer, folder} (a selection on several layers becomes one symbol with those layers inside; the instance lands on the topmost)", true, convert_to_symbol),
+        c("modify.break_apart", "Break Apart", "Modify", Some("Ctrl+B"), "{}", true, |s, p| s.each_layer(false, |s| break_apart(s, p))),
+        c("library.place", "Place on Stage", "", None, "{symbol | bitmap | sound: id, x?, y?} or {items: [{symbol | bitmap | sound: id}, ..], x?, y?} → {element, elements, sound?}: symbols and bitmaps centred on x, y (default: the stage centre; inside an open symbol, in its space) in the active layer's keyframe at the playhead, selected; a sound goes onto that keyframe, its span grown to fit (one sound per keyframe). One undo step", true, place),
     ]
 }
 
@@ -65,6 +66,7 @@ pub(crate) fn style(s: &Session, p: &Value, closed: bool) -> Result<(Option<Pain
         None => s.style.stroke_width,
     };
     let profile = opt_profile(p, "profile")?.unwrap_or_else(|| s.style.profile());
+    let line = opt_stroke_style(p, &s.style.line, width)?.unwrap_or_else(|| s.style.line.clone());
     let stroke = if p.get("stroke").is_some_and(Value::is_null) || width <= 0.0 {
         None
     } else {
@@ -73,7 +75,7 @@ pub(crate) fn style(s: &Session, p: &Value, closed: bool) -> Result<(Option<Pain
             None => (s.style.use_stroke || !closed).then_some(Stroke::new(s.style.stroke, width)),
         }
     }
-    .map(|st| st.with_profile(profile));
+    .map(|st| st.with_profile(profile).with_style(line));
     if fill.is_none() && stroke.is_none() {
         return Err(EngineError::Param("shape would be invisible: give it a fill or a stroke".into()));
     }
@@ -99,7 +101,7 @@ pub(crate) fn add_shape(s: &mut Session, name: &str, local: Path, origin: Vec2, 
     // A gradient or bitmap from the fill swatch is in stage space: it stays where it is on the
     // stage (Animate's Lock Fill after the Eyedropper).
     let fill = fill.map(|f| f.transformed(&Affine::translate(-origin.x, -origin.y)));
-    let merge = !object && crate::merge::can_merge(fill.as_ref(), stroke.as_ref());
+    let merge = !object && crate::merge::can_merge(stroke.as_ref());
     let id = ElementId(s.doc.alloc_id());
     let el = Element {
         id,
@@ -109,8 +111,9 @@ pub(crate) fn add_shape(s: &mut Session, name: &str, local: Path, origin: Vec2, 
         kind: ElementKind::Shape(Shape { path: Arc::new(local), fill, stroke, fill_rule: Default::default(), merge, bind: Vec::new(), points: Vec::new(), trim: None }),
     };
     if merge {
-        s.selection = crate::merge::merge_in(s, vec![el])?;
-        let ids: Vec<u64> = s.selection.iter().map(|e| e.0).collect();
+        let merged = crate::merge::merge_in(s, vec![el])?;
+        s.select_only(merged);
+        let ids: Vec<u64> = s.selection.id_list();
         return Ok(json!({"element": ids.first(), "elements": ids, "kind": name, "merged": true}));
     }
     let kf = s.editable_keyframe()?;
@@ -118,7 +121,7 @@ pub(crate) fn add_shape(s: &mut Session, name: &str, local: Path, origin: Vec2, 
         return Err(EngineError::State("too many elements on this keyframe".into()));
     }
     kf.elements.push(Arc::new(el));
-    s.selection = vec![id];
+    s.select_only([id]);
     Ok(json!({"element": id.0, "kind": name}))
 }
 
@@ -165,6 +168,11 @@ fn draw_line(s: &mut Session, p: &Value) -> Result<Value> {
     add_shape(s, "line", Path::line(a - c, b - c), c, None, stroke, object_param(s, p)?)
 }
 
+fn snap_to_objects(s: &mut Session, p: &Value) -> Result<Value> {
+    s.style.snap_objects = opt_bool(p, "on")?.unwrap_or(!s.style.snap_objects);
+    Ok(json!({"snap_to_objects": s.style.snap_objects}))
+}
+
 fn object_drawing(s: &mut Session, p: &Value) -> Result<Value> {
     s.style.object_drawing = opt_bool(p, "on")?.unwrap_or(!s.style.object_drawing);
     Ok(json!({"object_drawing": s.style.object_drawing}))
@@ -172,27 +180,63 @@ fn object_drawing(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ----- selection --------------------------------------------------------------------------
 
+/// Everything on every visible, unlocked layer at the playhead, as Animate's Select All.
 fn select_all(s: &mut Session, _: &Value) -> Result<Value> {
-    s.selection = s.visible_elements().iter().map(|e| e.id).collect();
+    let layers: Vec<LayerId> = s.timeline().layers.iter().map(|l| l.id).collect();
+    let mut sel = Selection::default();
+    for l in layers.into_iter().filter(|l| s.gathers(*l)) {
+        sel.extend_on(l, s.elements_on(l).iter().map(|e| e.id));
+    }
+    s.selection = sel;
     Ok(json!({"selected": s.selection.len()}))
 }
 
+/// Most ids `element.select` takes.
+const MAX_SELECT: usize = 100_000;
+
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = opt_u64_list(p, "ids")?.ok_or_else(|| EngineError::Param("param 'ids' is required".into()))?;
+    if ids.len() > MAX_SELECT {
+        return Err(EngineError::Param(format!("param 'ids' has more than {MAX_SELECT} ids")));
+    }
     let add = opt_bool(p, "add")?.unwrap_or(false);
-    let present: Vec<ElementId> = s.visible_elements().iter().map(|e| e.id).collect();
+    // Where each element is at the playhead: on `layer`, else the active layer first, then the
+    // others top to bottom.
+    let order: Vec<LayerId> = match opt_u64(p, "layer")?.map(LayerId) {
+        Some(l) if s.timeline().layer(l).is_none() => return Err(EngineError::State(format!("no layer with id {}", l.0))),
+        Some(l) => vec![l],
+        None => std::iter::once(s.layer).chain(s.timeline().layers.iter().map(|l| l.id).filter(|l| *l != s.layer)).collect(),
+    };
+    let mut at: std::collections::HashMap<ElementId, LayerId> = std::collections::HashMap::new();
+    for l in order {
+        for e in s.elements_on(l) {
+            at.entry(e.id).or_insert(l);
+        }
+    }
+    let mut picked: Vec<(LayerId, ElementId)> = Vec::with_capacity(ids.len());
+    for id in ids.into_iter().map(ElementId) {
+        let Some(&l) = at.get(&id) else {
+            return Err(EngineError::State(format!("element {} is not on the active layer, or any layer, at this frame", id.0)));
+        };
+        if !s.selectable(l) {
+            let name = s.timeline().layer(l).map(|x| x.name.clone()).unwrap_or_default();
+            return Err(EngineError::State(format!("element {} is on layer '{name}', which is locked or hidden", id.0)));
+        }
+        picked.push((l, id));
+    }
     if !add {
         s.selection.clear();
     }
-    for id in ids.into_iter().map(ElementId) {
-        if !present.contains(&id) {
-            return Err(EngineError::State(format!("element {} is not on the active layer at this frame", id.0)));
-        }
-        if !s.selection.contains(&id) {
-            s.selection.push(id);
-        }
+    for &(l, id) in &picked {
+        s.selection.insert(l, id);
     }
-    Ok(json!({"selected": s.selection.iter().map(|e| e.0).collect::<Vec<_>>()}))
+    // As a click does: the active layer is where the artwork is.
+    if let Some(&(l, _)) = picked.first()
+        && !picked.iter().any(|(x, _)| *x == s.layer)
+    {
+        s.layer = l;
+    }
+    Ok(json!({"selected": s.selection.id_list()}))
 }
 
 fn pick(s: &mut Session, p: &Value) -> Result<Value> {
@@ -200,19 +244,13 @@ fn pick(s: &mut Session, p: &Value) -> Result<Value> {
     let add = opt_bool(p, "add")?.unwrap_or(false);
     match s.hit_test(pt, 2.0) {
         Some((layer, el)) => {
-            if layer != s.layer {
-                s.layer = layer;
-                s.selection.clear();
-            }
+            // Shift adds it to (or takes it from) the selection, whichever layers that is on.
             if add {
-                if let Some(i) = s.selection.iter().position(|e| *e == el) {
-                    s.selection.remove(i);
-                } else {
-                    s.selection.push(el);
-                }
-            } else if !s.selection.contains(&el) {
-                s.selection = vec![el];
+                s.selection.toggle(layer, el);
+            } else if !s.selection.contains(layer, el) {
+                s.selection = Selection::only(layer, [el]);
             }
+            s.layer = layer;
             Ok(json!({"layer": layer.0, "element": el.0}))
         }
         None => {
@@ -227,13 +265,39 @@ fn pick(s: &mut Session, p: &Value) -> Result<Value> {
 // ----- element edits ----------------------------------------------------------------------
 
 fn translate(s: &mut Session, p: &Value) -> Result<Value> {
-    let (dx, dy) = (f32_req(p, "dx")?, f32_req(p, "dy")?);
-    let els = s.selected_elements_mut()?;
-    let n = els.len();
-    for e in els {
-        e.transform = Affine::translate(dx, dy).mul(&e.transform);
+    let (mut dx, mut dy) = (f32_req(p, "dx")?, f32_req(p, "dy")?);
+    let snap = s.style.snap_radius(opt_f32(p, "snap")?.unwrap_or(0.0).clamp(0.0, 1000.0));
+    let from = match p.get("from").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => {
+            let xy = v.as_array().filter(|a| a.len() == 2).and_then(|a| Some(Vec2::new(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32)));
+            Some(xy.filter(|q| q.is_finite()).ok_or_else(|| EngineError::Param("param 'from' must be [x, y]".into()))?)
+        }
+    };
+    let n = move_by(s, Vec2::new(dx, dy))?;
+    // Snapping while dragging (ADR 0041): a little more, onto what is near.
+    let mut snapped = Value::Null;
+    if snap > 0.0
+        && let Some((extra, at, kind)) = crate::cmds_raw::snap_selection(s, snap, from)
+    {
+        move_by(s, extra)?;
+        (dx, dy) = (dx + extra.x, dy + extra.y);
+        snapped = json!({"x": at.x, "y": at.y, "to": kind.key()});
     }
-    Ok(json!({"moved": n}))
+    Ok(json!({"moved": n, "dx": dx, "dy": dy, "snapped": snapped}))
+}
+
+/// Moves the selection by `d` on every layer it is on; how many elements moved.
+fn move_by(s: &mut Session, d: Vec2) -> Result<u64> {
+    let v = s.each_layer(true, |s| {
+        let els = s.selected_elements_mut()?;
+        let n = els.len();
+        for e in els {
+            e.transform = Affine::translate(d.x, d.y).mul(&e.transform);
+        }
+        Ok(json!({"moved": n}))
+    })?;
+    Ok(v["moved"].as_u64().unwrap_or(0))
 }
 
 fn set_transform(s: &mut Session, p: &Value) -> Result<Value> {
@@ -306,12 +370,14 @@ fn set_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let profile = opt_profile(p, "profile")?;
     let default = s.style.clone();
+    // Checked once up front, so a bad style param changes nothing.
+    opt_stroke_style(p, &default.line, default.stroke_width)?;
     for sh in shapes_mut(s)? {
         if remove {
             sh.stroke = None;
             continue;
         }
-        let mut st = sh.stroke.take().unwrap_or_else(|| Stroke::new(default.stroke, default.stroke_width).with_profile(default.profile()));
+        let mut st = sh.stroke.take().unwrap_or_else(|| default.new_stroke(default.stroke, default.stroke_width));
         if let Some(c) = color {
             st.color = c;
         }
@@ -320,6 +386,9 @@ fn set_stroke(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(pr) = &profile {
             st = st.with_profile(pr.clone());
+        }
+        if let Some(line) = opt_stroke_style(p, &st.style, st.width)? {
+            st = st.with_style(line);
         }
         sh.stroke = (st.width > 0.0).then_some(st);
     }
@@ -457,30 +526,33 @@ fn set_loop(s: &mut Session, p: &Value) -> Result<Value> {
 /// A symbol's kind, for every instance of it: a graphic keeps step with the timeline it is
 /// placed on, a movie clip plays its own timeline on a loop, a button shows its Up frame.
 fn set_symbol_kind(s: &mut Session, p: &Value) -> Result<Value> {
-    let kind = match str_req(p, "kind")? {
-        "graphic" => SymbolKind::Graphic,
-        "movie_clip" | "movie clip" => SymbolKind::MovieClip,
-        "button" => SymbolKind::Button,
-        other => return Err(EngineError::Param(format!("unknown symbol kind '{other}' (graphic, movie_clip or button)"))),
-    };
-    let id = match opt_u64(p, "symbol")? {
-        Some(id) => SymbolId(id),
+    let kind = crate::cmds_library::kind_of(str_req(p, "kind")?)?;
+    let ids: Vec<SymbolId> = match opt_u64(p, "symbol")? {
+        Some(id) => vec![SymbolId(id)],
         None => {
-            // The symbol of the selected instance.
-            let sel = s.selection.first().copied().ok_or_else(|| EngineError::State("select a symbol instance, or pass 'symbol'".into()))?;
-            s.visible_elements()
-                .iter()
-                .find(|e| e.id == sel)
-                .and_then(|e| match e.kind {
-                    ElementKind::Symbol { symbol, .. } => Some(symbol),
-                    ElementKind::Shape(_) | ElementKind::Text(_) | ElementKind::Camera => None,
-                })
-                .ok_or_else(|| EngineError::State("the selection is not a symbol instance".into()))?
+            // The symbols of the selected instances, on every layer (ADR 0053: a "mixed" Type
+            // row sets them all), in selection order.
+            let mut ids = Vec::new();
+            for (layer, sel) in s.selection.iter() {
+                if let Some(ElementKind::Symbol { symbol, .. }) = s.elements_on(layer).iter().find(|e| e.id == sel).map(|e| &e.kind)
+                    && !ids.contains(symbol)
+                {
+                    ids.push(*symbol);
+                }
+            }
+            if ids.is_empty() {
+                return Err(EngineError::State(if s.selection.is_empty() { "select a symbol instance, or pass 'symbol'".into() } else { "the selection is not a symbol instance".into() }));
+            }
+            ids
         }
     };
-    let sym = s.doc.library.iter_mut().find(|x| x.id == id).ok_or_else(|| EngineError::State(format!("no symbol with id {}", id.0)))?;
-    std::sync::Arc::make_mut(sym).kind = kind;
-    Ok(json!({"symbol": id.0, "kind": format!("{kind:?}")}))
+    for id in &ids {
+        let sym = s.doc.library.iter_mut().find(|x| x.id == *id).ok_or_else(|| EngineError::State(format!("no symbol with id {}", id.0)))?;
+        if sym.kind != kind {
+            std::sync::Arc::make_mut(sym).kind = kind;
+        }
+    }
+    Ok(json!({"symbol": ids.first().map(|i| i.0), "symbols": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "kind": format!("{kind:?}")}))
 }
 
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
@@ -491,8 +563,13 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"name": name}))
 }
 
-pub(crate) fn delete(s: &mut Session, _: &Value) -> Result<Value> {
-    let sel = s.selection.clone();
+/// Clear: the selection goes, on every layer it is on.
+pub(crate) fn delete_selection(s: &mut Session, p: &Value) -> Result<Value> {
+    s.each_layer(true, |s| delete(s, p))
+}
+
+fn delete(s: &mut Session, _: &Value) -> Result<Value> {
+    let sel = s.selection.on(s.layer);
     if sel.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
     }
@@ -507,7 +584,7 @@ pub(crate) fn delete(s: &mut Session, _: &Value) -> Result<Value> {
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let dx = opt_f32(p, "dx")?.unwrap_or(10.0);
     let dy = opt_f32(p, "dy")?.unwrap_or(10.0);
-    let sel = s.selection.clone();
+    let sel = s.selection.on(s.layer);
     if sel.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
     }
@@ -521,12 +598,12 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         out.push(Arc::new(e));
     }
     s.editable_keyframe()?.elements.extend(out);
-    s.selection = new_ids.clone();
+    s.select_only(new_ids.iter().copied());
     Ok(json!({"created": new_ids.iter().map(|e| e.0).collect::<Vec<_>>()}))
 }
 
 fn arrange(s: &mut Session, front: bool) -> Result<Value> {
-    let sel = s.selection.clone();
+    let sel = s.selection.on(s.layer);
     if sel.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
     }
@@ -539,7 +616,7 @@ fn arrange(s: &mut Session, front: bool) -> Result<Value> {
 /// Bring Forward / Send Backward: each selected element swaps with the unselected neighbour
 /// above (or below) it; a selected block moves as one, keeping its order.
 fn arrange_step(s: &mut Session, forward: bool) -> Result<Value> {
-    let sel = s.selection.clone();
+    let sel = s.selection.on(s.layer);
     if sel.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
     }
@@ -565,31 +642,28 @@ fn arrange_step(s: &mut Session, forward: bool) -> Result<Value> {
 
 // ----- symbols ----------------------------------------------------------------------------
 
+/// Convert to Symbol. The registration point is the centre of the selection's bounds. A
+/// selection on several layers becomes one symbol with those layers inside it (named and
+/// stacked as they are), and its instance lands on the topmost of them, where its first
+/// selected element was; the other layers lose what was selected (ADR 0044).
 pub(crate) fn convert_to_symbol(s: &mut Session, p: &Value) -> Result<Value> {
-    let sel = s.selection.clone();
-    if sel.is_empty() {
+    let layers = s.selected_layers();
+    let Some(&top) = layers.first() else {
         return Err(EngineError::State("select something to convert".into()));
-    }
-    let n = s.doc.library.len() + 1;
-    let name: String = opt_str(p, "name")?.map(|x| x.chars().take(128).collect()).unwrap_or_else(|| format!("Symbol {n}"));
+    };
+    // Into the folder asked for (ADR 0053), else the top level; the name is free there: the
+    // next free “Symbol n”, or the name asked for with a number when the folder has it already.
+    let folder = crate::cmds_library::opt_folder(s, p, "folder")?;
+    let kind = opt_str(p, "kind")?.map(crate::cmds_library::kind_of).transpose()?.unwrap_or(SymbolKind::Graphic);
+    let name: String = match opt_str(p, "name")? {
+        Some(n) => s.doc.unique_name(folder, n),
+        None => s.doc.numbered_name(folder, "Symbol", s.doc.library.len() + 1),
+    };
     let bounds = s.selection_bounds();
     let center = if bounds.is_empty() { Vec2::ZERO } else { bounds.center() };
     let sym_id = SymbolId(s.doc.alloc_id());
-    let layer_id = LayerId(s.doc.alloc_id());
+    let first_layer = LayerId(s.doc.alloc_id());
     let inst_id = ElementId(s.doc.alloc_id());
-    let kf = s.editable_keyframe()?;
-    let first_pos = kf.elements.iter().position(|e| sel.contains(&e.id)).unwrap_or(kf.elements.len());
-    let (picked, rest): (Vec<Arc<Element>>, Vec<Arc<Element>>) = kf.elements.drain(..).partition(|e| sel.contains(&e.id));
-    // Children are stored relative to the registration point (the selection centre).
-    let to_local = Affine::translate(-center.x, -center.y);
-    let children: Vec<Arc<Element>> = picked
-        .into_iter()
-        .map(|e| {
-            let mut e = Arc::unwrap_or_clone(e);
-            e.transform = to_local.mul(&e.transform);
-            Arc::new(e)
-        })
-        .collect();
     let instance = Element {
         id: inst_id,
         name: String::new(),
@@ -597,20 +671,49 @@ pub(crate) fn convert_to_symbol(s: &mut Session, p: &Value) -> Result<Value> {
         color: ColorEffect::default(),
         kind: ElementKind::Symbol { symbol: sym_id, loop_mode: LoopMode::Loop, first_frame: 0, blend: anicraft_doc::BlendMode::Normal, filters: Vec::new(), events: Vec::new() },
     };
-    let mut elements = rest;
-    elements.insert(first_pos.min(elements.len()), Arc::new(instance));
-    kf.elements = elements;
-    let mut layer = Layer::new(layer_id, "Layer 1");
-    if let Some(k) = layer.keyframe_mut(0) {
-        k.elements = children;
+    // Children are stored relative to the registration point (the selection centre).
+    let to_local = Affine::translate(-center.x, -center.y);
+    let single = layers.len() == 1;
+    let mut inner: Vec<Arc<Layer>> = Vec::with_capacity(layers.len());
+    for l in layers {
+        let sel = s.selection.on(l);
+        let source = s.timeline().layer(l).map(|x| x.name.clone()).unwrap_or_default();
+        let picked = s.with_layer(l, |s| -> Result<Vec<Arc<Element>>> {
+            let kf = s.editable_keyframe()?;
+            let first_pos = kf.elements.iter().position(|e| sel.contains(&e.id)).unwrap_or(kf.elements.len());
+            let (picked, mut rest): (Vec<Arc<Element>>, Vec<Arc<Element>>) = kf.elements.drain(..).partition(|e| sel.contains(&e.id));
+            if l == top {
+                rest.insert(first_pos.min(rest.len()), Arc::new(instance.clone()));
+            }
+            kf.elements = rest;
+            Ok(picked)
+        })?;
+        let children: Vec<Arc<Element>> = picked
+            .into_iter()
+            .map(|e| {
+                let mut e = Arc::unwrap_or_clone(e);
+                e.transform = to_local.mul(&e.transform);
+                Arc::new(e)
+            })
+            .collect();
+        let id = if inner.is_empty() { first_layer } else { LayerId(s.doc.alloc_id()) };
+        let mut layer = Layer::new(id, if single { "Layer 1".to_string() } else { source });
+        if let Some(k) = layer.keyframe_mut(0) {
+            k.elements = children;
+        }
+        inner.push(Arc::new(layer));
     }
-    s.doc.library.push(Arc::new(Symbol { id: sym_id, name: name.clone(), kind: SymbolKind::Graphic, linkage: None, timeline: Timeline { layers: vec![Arc::new(layer)] } }));
-    s.selection = vec![inst_id];
-    Ok(json!({"symbol": sym_id.0, "instance": inst_id.0, "name": name}))
+    s.doc.library.push(Arc::new(Symbol { id: sym_id, name: name.clone(), kind, linkage: None, timeline: Timeline { layers: inner } }));
+    if folder.is_some() {
+        s.doc.place_entry(LibraryEntry::Item(LibraryItem::Symbol(sym_id)), folder);
+    }
+    s.layer = top;
+    s.select_only([inst_id]);
+    Ok(json!({"symbol": sym_id.0, "instance": inst_id.0, "name": name, "layer": top.0, "folder": folder.map(|f| f.0)}))
 }
 
 fn break_apart(s: &mut Session, _: &Value) -> Result<Value> {
-    let sel = s.selection.clone();
+    let sel = s.selection.on(s.layer);
     if sel.is_empty() {
         return Err(EngineError::State("nothing is selected".into()));
     }
@@ -657,22 +760,90 @@ fn break_apart(s: &mut Session, _: &Value) -> Result<Value> {
         return Err(EngineError::State("the selection has no symbol instances or text to break apart".into()));
     }
     s.editable_keyframe()?.elements = out;
-    s.selection = fresh_ids.clone();
+    s.select_only(fresh_ids.iter().copied());
     Ok(json!({"created": fresh_ids.len()}))
 }
 
-/// Places a Library item centred on `x`/`y` (default: the stage centre): an instance of
-/// `symbol`, or a rectangle of `bitmap`'s size showing it, in the current keyframe, selected.
+/// Most items one `library.place` takes.
+const MAX_PLACE: usize = 1_000;
+
+/// Places Library items at `x`/`y` (default: the stage centre), as a drop from the Library
+/// does (ADR 0053): an instance of each symbol, a rectangle of each bitmap's size showing it,
+/// in the active layer's keyframe at the playhead, all selected; a sound goes onto that
+/// keyframe. One command, so one undo step however many items.
 fn place(s: &mut Session, p: &Value) -> Result<Value> {
-    if let Some(bitmap) = opt_u64(p, "bitmap")? {
-        return place_bitmap(s, p, anicraft_doc::BitmapId(bitmap));
+    let items: Vec<LibraryItem> = match p.get("items") {
+        Some(list) => {
+            let list = list.as_array().ok_or_else(|| EngineError::Param("param 'items' must be a list of {\"symbol\" | \"bitmap\" | \"sound\": id}".into()))?;
+            if list.len() > MAX_PLACE {
+                return Err(EngineError::Param(format!("at most {MAX_PLACE} items at once")));
+            }
+            let mut out = Vec::with_capacity(list.len());
+            for v in list {
+                match crate::cmds_library::entry_of(v)? {
+                    LibraryEntry::Item(i) => out.push(i),
+                    LibraryEntry::Folder(_) => return Err(EngineError::Param("a folder can't be placed; name the items in it".into())),
+                }
+            }
+            out
+        }
+        None => match (opt_u64(p, "symbol")?, opt_u64(p, "bitmap")?, opt_u64(p, "sound")?) {
+            (Some(i), None, None) => vec![LibraryItem::Symbol(SymbolId(i))],
+            (None, Some(i), None) => vec![LibraryItem::Bitmap(anicraft_doc::BitmapId(i))],
+            (None, None, Some(i)) => vec![LibraryItem::Sound(anicraft_doc::SoundId(i))],
+            _ => return Err(EngineError::Param("name one item ('symbol', 'bitmap' or 'sound'), or a list in 'items'".into())),
+        },
+    };
+    if items.is_empty() {
+        return Err(EngineError::Param("nothing to place".into()));
     }
-    let sym = SymbolId(opt_u64(p, "symbol")?.ok_or_else(|| EngineError::Param("param 'symbol' or 'bitmap' is required".into()))?);
-    if s.doc.symbol(sym).is_none() {
-        return Err(EngineError::State(format!("no symbol with id {}", sym.0)));
+    let mut sound = None;
+    for &i in &items {
+        if !s.doc.has_item(i) {
+            return Err(EngineError::State(match i {
+                LibraryItem::Symbol(id) => format!("no symbol with id {}", id.0),
+                LibraryItem::Bitmap(id) => format!("no bitmap with id {}", id.0),
+                LibraryItem::Sound(id) => format!("no sound with id {} in the library", id.0),
+            }));
+        }
+        match i {
+            LibraryItem::Symbol(id) if crate::editing::would_nest(s, id) => return Err(EngineError::State("a symbol can't be placed inside itself".into())),
+            LibraryItem::Sound(id) => {
+                if sound.is_some_and(|x| x != id) {
+                    return Err(EngineError::State("a keyframe holds one sound; place sounds one at a time, on different keyframes or layers".into()));
+                }
+                sound = Some(id);
+            }
+            _ => {}
+        }
     }
     let x = opt_f32(p, "x")?.unwrap_or(s.doc.stage.width as f32 / 2.0);
     let y = opt_f32(p, "y")?.unwrap_or(s.doc.stage.height as f32 / 2.0);
+    if !(x.is_finite() && y.is_finite()) || x.abs() > 1.0e6 || y.abs() > 1.0e6 {
+        return Err(EngineError::Param("'x' and 'y' must be within a million pixels of the origin".into()));
+    }
+    let mut placed = Vec::new();
+    for &i in &items {
+        match i {
+            LibraryItem::Symbol(id) => placed.push(place_symbol(s, id, x, y)?),
+            LibraryItem::Bitmap(id) => placed.push(place_bitmap(s, id, x, y)?),
+            LibraryItem::Sound(_) => {}
+        }
+    }
+    let mut out = json!({"element": placed.first().map(|e| e.0), "elements": placed.iter().map(|e| e.0).collect::<Vec<_>>()});
+    if let Some(id) = sound {
+        if s.active_layer().is_some_and(|l| l.locked) || s.timeline().locked_by_folder(s.layer) {
+            return Err(EngineError::State("the active layer is locked; unlock it to put a sound on it".into()));
+        }
+        out["sound"] = crate::cmds_sound::place(s, &json!({"sound": id.0, "extend": true}))?;
+    }
+    if !placed.is_empty() {
+        s.select_only(placed.iter().copied());
+    }
+    Ok(out)
+}
+
+fn place_symbol(s: &mut Session, sym: SymbolId, x: f32, y: f32) -> Result<ElementId> {
     let id = ElementId(s.doc.alloc_id());
     let el = Element {
         id,
@@ -682,17 +853,14 @@ fn place(s: &mut Session, p: &Value) -> Result<Value> {
         kind: ElementKind::Symbol { symbol: sym, loop_mode: LoopMode::Loop, first_frame: 0, blend: anicraft_doc::BlendMode::Normal, filters: Vec::new(), events: Vec::new() },
     };
     s.editable_keyframe()?.elements.push(Arc::new(el));
-    s.selection = vec![id];
-    Ok(json!({"element": id.0}))
+    Ok(id)
 }
 
-fn place_bitmap(s: &mut Session, p: &Value, bitmap: anicraft_doc::BitmapId) -> Result<Value> {
+fn place_bitmap(s: &mut Session, bitmap: anicraft_doc::BitmapId, x: f32, y: f32) -> Result<ElementId> {
     let (name, w, h) = match s.doc.bitmap(bitmap) {
         Some(b) => (b.name.clone(), b.width as f32, b.height as f32),
         None => return Err(EngineError::State(format!("no bitmap with id {}", bitmap.0))),
     };
-    let x = opt_f32(p, "x")?.unwrap_or(s.doc.stage.width as f32 / 2.0);
-    let y = opt_f32(p, "y")?.unwrap_or(s.doc.stage.height as f32 / 2.0);
     let id = ElementId(s.doc.alloc_id());
     let el = Element {
         id,
@@ -711,6 +879,5 @@ fn place_bitmap(s: &mut Session, p: &Value, bitmap: anicraft_doc::BitmapId) -> R
         }),
     };
     s.editable_keyframe()?.elements.push(Arc::new(el));
-    s.selection = vec![id];
-    Ok(json!({"element": id.0}))
+    Ok(id)
 }

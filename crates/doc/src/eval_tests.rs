@@ -801,7 +801,7 @@ fn an_active_trim_cuts_the_path_and_drops_the_fill() {
     let mut t = Trim::default();
     t.start.set_key(0, 0.25);
     t.end.set_key(0, 0.75);
-    shape.trim = Some(t);
+    shape.trim = Some(Box::new(t));
     let mut k = Keyframe::new(0, 20);
     k.elements.push(Arc::new(Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Shape(shape) }));
     layer0(&mut d).keyframes = vec![Arc::new(k)];

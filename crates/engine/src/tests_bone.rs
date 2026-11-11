@@ -1,10 +1,10 @@
-//! The bone system end to end (ADR 0104): rig commands, posing, IK, binding, the render
-//! gate (a bound shape follows its bone's analytic prediction), the file format, plug-in
-//! policy and robustness.
+//! Bones and inverse kinematics end to end (ADR 0043): building an armature with the Bone
+//! tool's commands, posing by angle and by IK, pose tweens, limits and pins, removal, undo,
+//! the file format, refusals, analytic renders and plug-in policy.
 
 use super::*;
-use anicraft_doc::{Document, LayerKind, Stage};
-use anicraft_geom::Vec2;
+use anicraft_doc::{BlendMode, ColorEffect, Document, ElementKind, LoopMode, Paint, Rgba, Shape, Stage, Symbol, SymbolId, SymbolKind, Timeline};
+use anicraft_geom::{Affine, Path};
 use anicraft_render::render_frame;
 use serde_json::json;
 
@@ -15,274 +15,241 @@ fn run(s: &mut Session, id: &str, p: Value) -> Value {
     }
 }
 
-/// A 200 × 100 white stage, 20 frames. `rect` draws a 10×10 black rect at (x, y) and
-/// returns (session, element id).
-fn stage_with(x: f32, y: f32) -> (Session, u64) {
-    let d = Document { stage: Stage { width: 200, height: 100, ..Stage::default() }, ..Document::default() };
-    let mut s = Session::new(d);
-    run(&mut s, "draw.rect", json!({"x": x, "y": y, "w": 10.0, "h": 10.0, "fill": "#000000", "stroke": null}));
-    run(&mut s, "timeline.insert_frame", json!({"count": 19}));
-    let el = s.selection[0].0;
-    (s, el)
+pub(crate) const ROOT: u64 = 10;
+pub(crate) const ARM: u64 = 11;
+pub(crate) const HAND: u64 = 12;
+const SHAPE: u64 = 13;
+
+/// A 500 × 300 stage, 20 frames, with three instances of a 100 × 10 black bar (registration at
+/// its left end) along y = 100 from x = 100, 200 and 300, and a plain shape below them.
+pub(crate) fn three_bars() -> Session {
+    let mut d = Document { stage: Stage { width: 500, height: 300, ..Stage::default() }, ..Document::default() };
+    let bar = SymbolId(1);
+    let mut inner = Layer::new(LayerId(2), "bar");
+    inner.keyframes[0] = Arc::new({
+        let mut k = Keyframe::new(0, 1);
+        k.elements.push(Arc::new(Element { id: ElementId(3), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Shape(Shape::filled(Path::rect(0.0, -5.0, 100.0, 10.0), Paint::Solid(Rgba::BLACK))) }));
+        k
+    });
+    d.library.push(Arc::new(Symbol { id: bar, name: "Bar".into(), kind: SymbolKind::Graphic, linkage: None, timeline: Timeline { layers: vec![Arc::new(inner)] } }));
+    let inst = |id: u64, x: f32| Arc::new(Element { id: ElementId(id), name: String::new(), transform: Affine::translate(x, 100.0), color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: bar, loop_mode: LoopMode::Loop, first_frame: 0, blend: BlendMode::Normal, filters: Vec::new(), events: Vec::new() } });
+    let shape = Arc::new(Element { id: ElementId(SHAPE), name: String::new(), transform: Affine::translate(100.0, 250.0), color: ColorEffect::default(), kind: ElementKind::Shape(Shape::filled(Path::rect(0.0, 0.0, 20.0, 20.0), Paint::Solid(Rgba::BLACK))) });
+    let l = Arc::make_mut(&mut d.timeline_mut(0).layers[0]);
+    l.keyframes = vec![Arc::new({
+        let mut k = Keyframe::new(0, 20);
+        k.elements = vec![inst(ROOT, 100.0), inst(ARM, 200.0), inst(HAND, 300.0), shape];
+        k
+    })];
+    d.next_id = 100;
+    Session::new(d)
 }
 
-/// An empty 200 × 100 stage, 20 frames.
-fn blank() -> Session {
-    let d = Document { stage: Stage { width: 200, height: 100, ..Stage::default() }, ..Document::default() };
-    let mut s = Session::new(d);
-    run(&mut s, "timeline.insert_frame", json!({"count": 19}));
-    s
+/// [`three_bars`] rigged as a chain: shoulder (200, 100) → elbow (300, 100) → wrist (400, 100).
+pub(crate) fn rigged() -> (Session, u64, u64) {
+    let mut s = three_bars();
+    let b1 = run(&mut s, "bone.add", json!({"from": ROOT, "to": ARM, "head": [200, 100], "tail": [300, 100]}))["bone"].as_u64().unwrap();
+    let b2 = run(&mut s, "bone.add", json!({"from": ARM, "to": HAND, "tail": [400, 100]}))["bone"].as_u64().unwrap();
+    (s, b1, b2)
 }
 
-/// A bone layer named `name` with one artwork layer inside it, both on an empty stage.
-fn rig_with_art(s: &mut Session, name: &str) -> u64 {
-    run(s, "bone.rig_add", json!({"name": name}));
-    let rig = s.layer.0;
-    // The artwork joins the rig (as an imported rig's layers do): a new layer moved down
-    // lands inside the bone layer above it.
-    run(s, "layer.new", json!({"name": "Art"}));
-    run(s, "layer.move_down", json!({}));
-    assert!(s.doc.timeline(0).layer(s.layer).unwrap().parent.is_some(), "Art sits inside the rig");
-    rig
+fn bone_at(s: &mut Session, frame: u32, bone: u64) -> Value {
+    let v = run(s, "bone.info", json!({"frame": frame}));
+    v["armatures"][0]["bones"].as_array().unwrap().iter().find(|b| b["id"] == bone).cloned().unwrap()
 }
 
-/// Whether pixel (x, y) of `frame` is black (else white).
-fn black(s: &Session, frame: u32, x: u32, y: u32) -> bool {
-    let pm = render_frame(&s.doc, frame, 1.0).unwrap();
-    let p = pm.pixel(x, y).unwrap();
-    assert!(p[0] < 0.01 || p[0] > 0.99, "pixel ({x}, {y}) is part-covered: {p:?}");
-    p[0] < 0.5
+fn pt(v: &Value) -> Vec2 {
+    Vec2::new(v[0].as_f64().unwrap() as f32, v[1].as_f64().unwrap() as f32)
 }
 
-/// A rig with a bone pivoted at (100, 50), its angle keyed 0→90° over frames 0→12, and a
-/// 10×10 rect at (120, 45) bound to it. Returns (session, rect id).
-fn rigged() -> (Session, u64) {
-    let mut s = blank();
-    rig_with_art(&mut s, "Rig");
-    run(&mut s, "draw.rect", json!({"x": 120.0, "y": 45.0, "w": 10.0, "h": 10.0, "fill": "#000000", "stroke": null}));
-    let el = s.selection[0].0;
-    run(&mut s, "bone.add", json!({"name": "dial", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
-    run(&mut s, "bone.key", json!({"bone": 0, "channel": "angle", "frame": 12, "value": 1.5707964}));
-    run(&mut s, "bone.bind", json!({"bone": 0, "element": [el]}));
-    (s, el)
+fn transform_of(s: &Session, frame: u32, id: u64) -> Affine {
+    let tl = s.doc.timeline(s.scene);
+    tl.layers.iter().find_map(|l| evaluate_layer_elements(l, frame).and_then(|(_, e)| e.iter().find(|e| e.id.0 == id).map(|e| e.transform))).unwrap()
 }
 
 #[test]
-fn a_rig_holds_bones_and_poses_them_over_time() {
-    let mut s = blank();
-    let rig = LayerId(rig_with_art(&mut s, "Rig"));
+fn the_bone_tool_moves_instances_onto_an_armature_layer() {
+    let (mut s, b1, b2) = rigged();
     let tl = s.doc.timeline(0);
-    assert_eq!(tl.layers[0].kind, LayerKind::Bone, "the rig sits above the artwork");
-    assert_eq!(tl.layers[0].name, "Rig");
-    // Bones chain: the second hangs off the first's tip by default.
-    run(&mut s, "bone.add", json!({"name": "root", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
-    // The second bone draws at the first's tip: pos = the parent length, Moho-style.
-    run(&mut s, "bone.add", json!({"name": "tip", "length": 40.0, "pos": [60.0, 0.0]}));
-    let sk = s.doc.timeline(0).layer(rig).unwrap().skeleton.clone().unwrap();
-    assert_eq!(sk.bones.len(), 2);
-    assert_eq!(sk.bones[1].parent, Some(anicraft_doc::BoneId(0)));
-    // info reads the rig back at a frame: the second bone's base sits at the first's tip.
-    let v = run(&mut s, "bone.info", json!({"layer": rig.0, "frame": 0}));
-    let bones = v["bones"].as_array().unwrap();
-    assert_eq!(bones[1]["name"], "tip");
-    let tip_x = bones[1]["x"].as_f64().unwrap();
-    assert!((tip_x - 160.0).abs() < 1e-3, "child base at the root's tip: {bones:?}");
-    // Posing the root carries the child: its base lands on the root's tip.
-    run(&mut s, "bone.key", json!({"bone": 0, "channel": "angle", "frame": 12, "value": 1.5707964}));
-    let v = run(&mut s, "bone.info", json!({"layer": rig.0, "frame": 12}));
-    let bones = v["bones"].as_array().unwrap();
-    let (x, y) = (bones[1]["x"].as_f64().unwrap(), bones[1]["y"].as_f64().unwrap());
-    assert!((x - 100.0).abs() < 1e-3 && (y - 110.0).abs() < 1e-3, "child base at the turned root's tip: ({x}, {y})");
-    // Undo takes the last key back, and everything with it.
-    run(&mut s, "edit.undo", json!({}));
-    let sk = s.doc.timeline(0).layer(rig).unwrap().skeleton.clone().unwrap();
-    assert_eq!(sk.bones[0].angle.keys.len(), 1, "undo removes the pose key");
-}
-
-/// The stage-4 render gate (ADR 0104): the bound rect rides the bone's analytic matrix. At
-/// rest the rig deforms nothing; at frame 12 the bone has turned 90° about (100, 50), and
-/// the rect sits exactly where the rotation puts it.
-#[test]
-fn a_bound_shape_follows_its_bone_render_gate() {
-    let (s, _) = rigged();
-    // Frame 0: the rest pose is the identity skin — the rect is exactly where it was drawn.
-    assert!(black(&s, 0, 121, 46) && !black(&s, 0, 118, 46));
-    // Frame 12: the rect spans (95..105, 70..80); its old spot is white.
-    assert!(black(&s, 12, 96, 71) && black(&s, 12, 104, 79) && !black(&s, 12, 121, 46), "the rect rides the bone");
+    assert_eq!(tl.layers.len(), 2);
+    let arm = &tl.layers[0];
+    assert_eq!(arm.kind, LayerKind::Armature);
+    assert_eq!(arm.name, "Armature_1");
+    assert_eq!(s.layer, arm.id, "the armature layer is active");
+    let ids: Vec<u64> = arm.keyframes[0].elements.iter().map(|e| e.id.0).collect();
+    assert_eq!(ids, vec![ROOT, ARM, HAND]);
+    assert_eq!((arm.keyframes[0].start, arm.keyframes[0].duration), (0, 20), "the pose spans the timeline");
+    let rest: Vec<u64> = tl.layers[1].keyframes[0].elements.iter().map(|e| e.id.0).collect();
+    assert_eq!(rest, vec![SHAPE], "the instances left their layer; the shape stayed");
+    // Nothing moved on the stage.
+    assert_eq!(transform_of(&s, 0, HAND), Affine::translate(300.0, 100.0));
+    let b = bone_at(&mut s, 0, b2);
+    assert!(pt(&b["head"]).distance(Vec2::new(300.0, 100.0)) < 1e-3, "the second bone starts where the first ends");
+    assert!(pt(&b["tail"]).distance(Vec2::new(400.0, 100.0)) < 1e-3);
+    assert_eq!(b["parent_bone"], b1);
+    assert_eq!(bone_at(&mut s, 0, b1)["parent_bone"], Value::Null);
 }
 
 #[test]
-fn an_unbound_shape_stays_put_while_the_rig_moves() {
-    let mut s = blank();
-    rig_with_art(&mut s, "Rig");
-    run(&mut s, "draw.rect", json!({"x": 120.0, "y": 45.0, "w": 10.0, "h": 10.0, "fill": "#000000", "stroke": null}));
-    run(&mut s, "bone.add", json!({"name": "dial", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
-    run(&mut s, "bone.key", json!({"bone": 0, "channel": "angle", "frame": 12, "value": 1.5707964}));
-    // No bind: the rect stays where it was drawn at every frame.
-    assert!(black(&s, 0, 121, 46) && black(&s, 12, 121, 46));
+fn bone_add_refuses_what_cant_be_joined() {
+    let mut s = three_bars();
+    let bad = |s: &mut Session, p: Value| s.execute("bone.add", &p).unwrap_err().to_string();
+    assert!(bad(&mut s, json!({"from": ROOT, "to": ROOT})).contains("two different"));
+    assert!(bad(&mut s, json!({"from": ROOT, "to": SHAPE})).contains("symbol"));
+    assert!(bad(&mut s, json!({"from": ROOT, "to": 999})).contains("no instance"));
+    assert!(bad(&mut s, json!({"from": ROOT})).contains("required"));
+    assert!(bad(&mut s, json!({"from": ROOT, "to": ARM, "head": [1, "x"]})).contains("[x, y]"));
+    run(&mut s, "bone.add", json!({"from": ROOT, "to": ARM}));
+    assert!(bad(&mut s, json!({"from": HAND, "to": ARM})).contains("armature"), "start on the armature");
+    assert!(bad(&mut s, json!({"from": ARM, "to": ROOT})).contains("root"));
+    run(&mut s, "bone.add", json!({"from": ROOT, "to": HAND}));
+    assert!(bad(&mut s, json!({"from": ARM, "to": HAND})).contains("already"));
+    assert_eq!(s.history_len(), 2, "refusals leave no undo steps");
 }
 
 #[test]
-fn ik_aims_the_chain_at_its_target() {
-    let mut s = blank();
-    let rig = LayerId(rig_with_art(&mut s, "Rig"));
-    run(&mut s, "bone.add", json!({"name": "upper", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
-    // The forearm joint sits at the upper arm's tip (pos = its length).
-    run(&mut s, "bone.add", json!({"name": "fore", "length": 40.0, "pos": [60.0, 0.0]}));
-    // A goal bone OUTSIDE the chain — the way Moho IK targets work: a rooted control bone
-    // (parent −1) parked at (170, 20), so its tip sits at (190, 20), inside the reach disc.
-    run(&mut s, "bone.add", json!({"name": "goal", "parent": -1, "pos": [170.0, 20.0], "length": 20.0}));
-    run(&mut s, "bone.key", json!({"bone": 1, "channel": "target", "value": 2.0}));
-    // Through the document's own rig math: the forearm tip lands on the goal's tip.
-    let sk = s.doc.timeline(0).layer(rig).unwrap().skeleton.clone().unwrap();
-    let mats = sk.matrices(0);
-    let tip = mats[1].apply(Vec2::new(40.0, 0.0));
-    let want = Vec2::new(190.0, 20.0);
-    assert!((tip - want).length() < 0.5, "forearm tip {tip:?} vs goal tip {want:?}");
-    // Lengths hold: the upper's base sits exactly 60 px from its shoulder.
-    let base = mats[1].apply(Vec2::ZERO);
-    assert!(((base - Vec2::new(100.0, 50.0)).length() - 60.0).abs() < 1e-2, "{base:?}");
-    // info reports the solved pose too.
-    let v = run(&mut s, "bone.info", json!({"layer": rig.0, "frame": 0}));
-    let bones = v["bones"].as_array().unwrap();
-    let fore_base = (bones[1]["x"].as_f64().unwrap(), bones[1]["y"].as_f64().unwrap());
-    assert!(((fore_base.0 - 100.0).powi(2) + (fore_base.1 - 50.0).powi(2)).sqrt() - 60.0 < 1e-2);
+fn ik_drags_reach_and_one_drag_is_one_undo_step() {
+    let (mut s, b1, b2) = rigged();
+    let steps = s.history_len();
+    s.begin_gesture("Drag Bone");
+    let mut last = Value::Null;
+    for i in 0..=20 {
+        let t = i as f32 / 20.0;
+        last = run(&mut s, "bone.solve", json!({"bone": b2, "x": 400.0 - 100.0 * t, "y": 100.0 + 80.0 * t}));
+    }
+    s.end_gesture();
+    assert_eq!(s.history_len(), steps + 1, "one drag, one undo step");
+    assert_eq!(last["reached"], true, "{last}");
+    let end = pt(&bone_at(&mut s, 0, b2)["tail"]);
+    assert!(end.distance(Vec2::new(300.0, 180.0)) < 0.5, "{end:?}");
+    // The root stays where it was; the shoulder and elbow turned.
+    assert_eq!(transform_of(&s, 0, ROOT), Affine::translate(100.0, 100.0));
+    assert!(bone_at(&mut s, 0, b1)["angle"].as_f64().unwrap().abs() > 1.0);
+    // An unreachable target: the chain points straight at it, the root still put.
+    let v = run(&mut s, "bone.solve", json!({"bone": b2, "x": 200, "y": 320}));
+    assert_eq!(v["reached"], false);
+    assert!(bone_at(&mut s, 0, b2)["angle"].as_f64().unwrap().abs() < 0.1, "straight");
+    let tail = pt(&bone_at(&mut s, 0, b2)["tail"]);
+    assert!(tail.distance(Vec2::new(200.0, 300.0)) < 0.05, "{tail:?}");
+    assert_eq!(transform_of(&s, 0, ROOT), Affine::translate(100.0, 100.0));
+    s.undo().unwrap();
+    s.undo().unwrap();
+    assert_eq!(transform_of(&s, 0, HAND), Affine::translate(300.0, 100.0), "undo puts the pose back");
 }
 
 #[test]
-fn binding_commands_keep_their_promises() {
-    let mut s = blank();
-    let rig = LayerId(rig_with_art(&mut s, "Rig"));
-    run(&mut s, "draw.rect", json!({"x": 120.0, "y": 45.0, "w": 10.0, "h": 10.0, "fill": "#000000", "stroke": null}));
-    let el = s.selection[0].0;
-    // No rig: bone commands say so instead of guessing.
-    let (mut plain, _) = stage_with(20.0, 45.0);
-    let err = plain.execute("bone.add", &json!({})).unwrap_err().to_string();
-    assert!(err.contains("no bone rig"), "{err}");
-    run(&mut s, "bone.add", json!({"name": "a", "pos": [100.0, 50.0], "length": 60.0}));
-    run(&mut s, "bone.add", json!({"name": "b", "length": 40.0}));
-    // Weighted binds normalise: 2:2 becomes 0.5/0.5.
-    run(&mut s, "bone.bind", json!({"bones": [{"bone": 0, "weight": 2.0}, {"bone": 1, "weight": 2.0}], "element": [el], "layer": rig.0}));
-    let shape_of = |s: &Session| {
-        let tl = s.doc.timeline(0);
-        for l in &tl.layers {
-            for k in &l.keyframes {
-                for e in &k.elements {
-                    if let anicraft_doc::ElementKind::Shape(sh) = &e.kind {
-                        return sh.clone();
-                    }
-                }
-            }
-        }
-        panic!("a shape");
-    };
-    let sh = shape_of(&s);
-    assert!((sh.bind[0].1 - 0.5).abs() < 1e-4 && (sh.bind[1].1 - 0.5).abs() < 1e-4, "{:?}", sh.bind);
-    // Deleting bone 0 shifts the second down to index 0, and the bind follows.
-    run(&mut s, "bone.delete", json!({"bone": 0, "layer": rig.0}));
-    let sh = shape_of(&s);
-    assert_eq!(sh.bind, vec![(anicraft_doc::BoneId(0), 1.0)]);
-    // unbind frees the shape.
-    run(&mut s, "bone.unbind", json!({"element": [el], "layer": rig.0}));
-    let sh = shape_of(&s);
-    assert!(sh.bind.is_empty());
+fn limits_and_pins_hold_in_every_pose() {
+    let (mut s, b1, b2) = rigged();
+    run(&mut s, "bone.pose", json!({"bone": b2, "angle": 60}));
+    let v = run(&mut s, "bone.set_limits", json!({"bone": b2, "min": -20, "max": 20}));
+    assert_eq!(v["constrain"], true);
+    assert!((bone_at(&mut s, 0, b2)["angle"].as_f64().unwrap() - 20.0).abs() < 1e-3, "the pose came inside the new limits");
+    run(&mut s, "bone.solve", json!({"bone": b2, "x": 230, "y": 160}));
+    let a = bone_at(&mut s, 0, b2)["angle"].as_f64().unwrap();
+    assert!((-20.0 - 1e-3..=20.0 + 1e-3).contains(&a), "{a}");
+    assert!(s.execute("bone.set_limits", &json!({"bone": b2, "min": 30, "max": 10})).is_err());
+    assert!(s.execute("bone.set_limits", &json!({"bone": b2, "min": -400})).is_err());
+    run(&mut s, "bone.set_limits", json!({"bone": b2, "constrain": false}));
+    assert_eq!(bone_at(&mut s, 0, b2)["min"], Value::Null);
+    // Pinned: the shoulder keeps its angle while the elbow follows the drag.
+    let before = bone_at(&mut s, 0, b1)["angle"].as_f64().unwrap();
+    run(&mut s, "bone.pin", json!({"bone": b1, "pinned": true}));
+    run(&mut s, "bone.solve", json!({"bone": b2, "x": 350, "y": 60}));
+    assert_eq!(bone_at(&mut s, 0, b1)["angle"].as_f64().unwrap(), before);
+    assert!(s.execute("bone.solve", &json!({"bone": b1, "x": 0, "y": 0})).unwrap_err().to_string().contains("pinned"));
 }
 
 #[test]
-fn bones_round_trip_through_the_file_format() {
-    let (mut s, _) = rigged();
-    run(&mut s, "bone.add", json!({"name": "extra", "parent": 0, "length": 20.0, "constraints": true, "min": -0.5, "max": 0.5}));
+fn poses_key_frames_and_tween_with_easing() {
+    let (mut s, b1, _) = rigged();
+    run(&mut s, "bone.pose", json!({"bone": b1, "angle": 90, "frame": 10}));
+    let l = s.doc.timeline(0).layers[0].clone();
+    assert_eq!(l.keyframes.iter().map(|k| k.start).collect::<Vec<_>>(), vec![0, 10], "a pose keyed at frame 10");
+    let a = |s: &mut Session, f| bone_at(s, f, b1)["angle"].as_f64().unwrap();
+    assert_eq!(a(&mut s, 0), 0.0, "exact at the first key");
+    assert!((a(&mut s, 10) - 90.0).abs() < 1e-4, "exact at the second key");
+    assert!((a(&mut s, 5) - 45.0).abs() < 1e-3, "half way");
+    // The hand rides the shoulder: at frame 10 it hangs straight down from it.
+    assert!(transform_of(&s, 10, HAND).translation().distance(Vec2::new(200.0, 200.0)) < 1e-3);
+    // The span's easing shapes the pose tween.
+    run(&mut s, "timeline.set_easing", json!({"frame": 0, "easing": "QuadIn"}));
+    assert!((a(&mut s, 5) - 22.5).abs() < 1e-3, "{}", a(&mut s, 5));
+    // Posing inside the tween keys that frame with the pose it showed.
+    run(&mut s, "bone.pose", json!({"bone": b1, "rotate_by": 10, "frame": 5}));
+    assert!((a(&mut s, 5) - 32.5).abs() < 1e-3);
+    assert_eq!(s.doc.timeline(0).layers[0].keyframes.len(), 3);
+    // Moving the root moves the whole armature, in that pose.
+    run(&mut s, "bone.pose", json!({"dx": 10, "dy": 5, "frame": 10}));
+    assert!(transform_of(&s, 10, HAND).translation().distance(Vec2::new(210.0, 205.0)) < 1e-3);
+}
+
+#[test]
+fn artwork_edits_are_refused_on_the_armature_layer() {
+    let (mut s, _, _) = rigged();
+    s.select_only([ElementId(HAND)]);
+    for (id, p) in [("draw.rect", json!({"x": 0, "y": 0, "w": 5, "h": 5})), ("element.translate", json!({"dx": 5, "dy": 0})), ("edit.delete", json!({})), ("timeline.create_motion_tween", json!({}))] {
+        let e = s.execute(id, &p).unwrap_err().to_string();
+        assert!(e.contains("armature"), "{id}: {e}");
+    }
+    assert!(s.execute("layer.set_type", &json!({"type": "normal"})).is_err());
+}
+
+#[test]
+fn removing_bones_frees_the_instances_where_they_are() {
+    let (mut s, b1, b2) = rigged();
+    run(&mut s, "bone.pose", json!({"bone": b1, "angle": 90}));
+    run(&mut s, "bone.pose", json!({"bone": b1, "angle": 0, "frame": 10}));
+    // Two poses: removing asks first (undoable tier).
+    let c = s.confirmation("bone.remove", &json!({"bone": b2})).unwrap();
+    assert!(!c.irreversible && c.message.contains("2 keyframes"), "{}", c.message);
+    let hand = transform_of(&s, 0, HAND);
+    let v = run(&mut s, "bone.remove", json!({"bone": b2}));
+    assert_eq!(v["armature_removed"], false);
+    let tl = s.doc.timeline(0);
+    assert_eq!(tl.layers.len(), 3);
+    assert_eq!(tl.layers[1].keyframes[0].elements[0].id.0, HAND, "the hand is on a layer of its own");
+    assert!(tl.layers[0].keyframes.iter().all(|k| k.pose.0.iter().all(|j| j.bone.0 != b2)));
+    assert_eq!(transform_of(&s, 0, HAND), hand, "where it was");
+    // The last bone takes the armature with it; the instances stay as they look.
+    let arm = transform_of(&s, 0, ARM);
+    let v = run(&mut s, "bone.remove", json!({"bone": b1}));
+    assert_eq!(v["armature_removed"], true);
+    assert!(s.doc.timeline(0).layers.iter().all(|l| l.kind != LayerKind::Armature));
+    assert_eq!(transform_of(&s, 0, ARM), arm);
+    s.undo().unwrap();
+    s.undo().unwrap();
+    assert_eq!(s.doc.timeline(0).layers[0].armature.as_ref().unwrap().bones.len(), 2);
+}
+
+#[test]
+fn armatures_survive_a_file_round_trip_and_render_the_pose() {
+    let (mut s, b1, b2) = rigged();
+    run(&mut s, "bone.set_limits", json!({"bone": b2, "min": -45, "max": 45}));
+    run(&mut s, "bone.pin", json!({"bone": b1, "pinned": true}));
+    run(&mut s, "bone.pin", json!({"bone": b1, "pinned": false}));
+    run(&mut s, "bone.pose", json!({"bone": b1, "angle": 90, "frame": 10}));
     let text = crate::format::to_json(&s.doc).unwrap();
-    let doc = crate::format::from_json(&text).unwrap();
-    assert_eq!(doc, s.doc, "the saved file reads back identical");
-    let rig = doc.timeline(0).layers.iter().find(|l| l.kind == LayerKind::Bone).unwrap();
-    assert_eq!(rig.skeleton.as_ref().unwrap().bones.len(), 2);
+    let back = crate::format::from_json(&text).unwrap();
+    assert_eq!(back, s.doc);
+    for f in [0, 5, 10] {
+        assert_eq!(render_frame(&back, f, 1.0).unwrap().data, render_frame(&s.doc, f, 1.0).unwrap().data);
+    }
+    // At frame 10 the arm hangs from the shoulder: the bar covers (200, 150), not (250, 100).
+    let pm = render_frame(&s.doc, 10, 1.0).unwrap();
+    assert!(pm.pixel(200, 150).unwrap()[0] < 0.1, "the arm points down");
+    assert!(pm.pixel(250, 100).unwrap()[0] > 0.9, "and is no longer along the line");
+    // Older files (no armature) load as before; a file's armature on another kind of layer is
+    // dropped.
+    let old = crate::format::from_json(&crate::format::to_json(&Document::default()).unwrap()).unwrap();
+    assert!(old.timeline(0).layers.iter().all(|l| l.armature.is_none()));
+    let mut odd = s.doc.clone();
+    Arc::make_mut(&mut odd.timeline_mut(0).layers[0]).kind = LayerKind::Normal;
+    let odd = crate::format::from_json(&crate::format::to_json(&odd).unwrap()).unwrap();
+    assert!(odd.timeline(0).layers[0].armature.is_none());
 }
 
 #[test]
-fn bone_commands_are_shell_visible_and_plugin_safe() {
-    // The registry lists them (menus are generated from it), and a plug-in may call them.
-    for id in ["bone.rig_add", "bone.add", "bone.delete", "bone.set", "bone.key", "bone.clear_channel", "bone.bind", "bone.unbind", "bone.info"] {
-        assert!(crate::commands().iter().any(|c| c.id == id), "{id} missing from the registry");
-        assert!(crate::cmds_plugin::plugin_may_call(id).is_ok(), "{id} refused to plug-ins");
+fn plug_ins_may_pose_armatures() {
+    for id in ["bone.add", "bone.remove", "bone.set_limits", "bone.pin", "bone.pose", "bone.solve", "bone.info"] {
+        assert!(crate::cmds_plugin::plugin_may_call(id).is_ok(), "{id}");
     }
-}
-
-#[test]
-fn bone_commands_refuse_broken_input_without_panicking() {
-    let (mut s, el) = stage_with(120.0, 45.0);
-    let try_all = |s: &mut Session, p: &Value| {
-        for id in ["bone.add", "bone.set", "bone.key", "bone.delete", "bone.bind", "bone.info", "bone.clear_channel", "bone.unbind", "bone.rig_add"] {
-            if let Err(e) = s.execute(id, p) {
-                let msg = e.to_string();
-                assert!(!msg.contains("panic") && !msg.contains("internal"), "{id} {p}: {msg}");
-            }
-        }
-    };
-    for p in [
-        json!({"bone": 999}),
-        json!({"bone": 0, "channel": "angle"}),
-        json!({"bone": 0, "channel": "weird", "value": 1.0}),
-        json!({"bone": 0, "channel": "angle", "value": "no"}),
-        json!({"bone": 0, "channel": "angle", "value": 1.0, "frame": u64::MAX}),
-        json!({"bone": 0, "channel": "pos", "value": [1.0]}),
-        json!({"bone": -5, "channel": "angle", "value": 1.0}),
-        json!({"bones": [], "element": [el]}),
-        json!({"bones": [{"bone": 0, "weight": -3.0}], "element": [el]}),
-        json!({"bones": [{"bone": 999}], "element": [el]}),
-        json!({"bones": [{"bone": 0, "weight": 1e300}], "element": [el]}),
-        json!({"length": -50.0}),
-        json!({"length": f64::NEG_INFINITY}),
-        json!({"bone": 0, "parent": 0}),
-        json!({"bone": 0, "parent": 99}),
-        json!({"bone": 0, "offset": [f64::NAN, 1.0]}),
-        json!({"bone": 0, "min": 5.0, "max": -5.0}),
-        json!({"layer": u64::MAX}),
-    ] {
-        try_all(&mut s, &p);
-    }
-    // And the session still works after all that.
-    run(&mut s, "bone.rig_add", json!({}));
-    run(&mut s, "bone.add", json!({"length": 10.0}));
-}
-
-/// 门③ (parity plan › stage 4, ADR 0104): hand-IK interaction. The stage's Bones tool
-/// drags an IK tip by moving the TARGET bone's base through the parent-frame delta (this
-/// is exactly what `bonetool::drag_to` sends) — each tick one `bone.key`, one gesture one
-/// undo step, and the chain follows the cursor.
-#[test]
-fn dragging_the_hand_lands_the_tip_on_the_cursor() {
-    let mut s = blank();
-    let rig = LayerId(rig_with_art(&mut s, "Rig"));
-    run(&mut s, "bone.add", json!({"name": "upper", "pos": [100.0, 50.0], "length": 60.0, "angle": 0.0}));
-    run(&mut s, "bone.add", json!({"name": "fore", "length": 40.0, "pos": [60.0, 0.0]}));
-    run(&mut s, "bone.add", json!({"name": "hand", "length": 20.0, "pos": [40.0, 0.0]}));
-    run(&mut s, "bone.add", json!({"name": "goal", "parent": -1, "pos": [200.0, 50.0], "length": 10.0}));
-    run(&mut s, "bone.key", json!({"bone": 2, "channel": "target", "value": 3.0}));
-    let sk_of = |s: &Session| s.doc.timeline(0).layer(rig).unwrap().skeleton.clone().unwrap();
-    // Simulate three drag ticks toward the cursor at (150, 90), exactly what
-    // bonetool::drag_to sends: the ring grab moves the TARGET base by the parent-frame
-    // delta that puts the target TIP on the cursor; the solver pulls the chain with it.
-    let cursor = Vec2::new(150.0, 90.0);
-    for tick in 0..3 {
-        let sk = sk_of(&s);
-        let mats = sk.matrices(0);
-        let goal_tip = mats[3].apply(Vec2::new(10.0, 0.0));
-        let delta = cursor - goal_tip;
-        // The goal is a root: its parent frame is identity, the delta goes straight in.
-        let pos = sk.bones[3].pos.sample_or(0.0, Vec2::ZERO);
-        let next = pos + delta;
-        run(&mut s, "bone.key", json!({"bone": 3, "channel": "pos", "value": [next.x, next.y], "frame": 0}));
-        let fore_tip = sk_of(&s).matrices(0)[1].apply(Vec2::new(40.0, 0.0));
-        println!("tick {tick}: fore tip now {:?} (cursor {cursor:?})", (fore_tip.x, fore_tip.y));
-    }
-    // The chain reached the ring: the hand tip sits on the cursor, lengths held.
-    let sk = sk_of(&s);
-    let mats = sk.matrices(0);
-    let hand_tip = mats[2].apply(Vec2::new(20.0, 0.0));
-    assert!((hand_tip - cursor).length() < 0.5, "hand tip {hand_tip:?} vs cursor {cursor:?}");
-    // One gesture: the three ticks collapse into one undo step.
-    let before = s.doc.clone();
-    run(&mut s, "edit.undo", json!({}));
-    assert_ne!(s.doc, before, "the whole drag was one undo step");
 }

@@ -6,10 +6,15 @@
 //! package's `golden/` folder. Probes then check, by hand-worked colours, what the golden
 //! should show. `UPDATE_GOLDENS=1` rewrites the goldens (see `golden/mod.rs`).
 //!
+//! Each package also opens as a `.fla` archive, packed in every layout zip writers use, with
+//! `file.open`, as the same document and the same golden frames (ADR 0054).
+//!
 //! The report and structure of each package, and its hostile variants, are checked in the xfl
 //! crate (`crates/xfl/tests/corpus.rs`).
 
 mod golden;
+#[path = "../../xfl/tests/support/fla.rs"]
+mod pack;
 
 use anicraft_engine::Session;
 use anicraft_engine::doc::Document;
@@ -27,6 +32,7 @@ const FRAMES: &[(&str, &[u32])] = &[
     ("filters", &[0]),
     ("gradients", &[0]),
     ("guides", &[0, 6, 12]),
+    ("interactive", &[0, 9]),
     ("masks", &[0]),
     ("primitives", &[0]),
     ("scenes", &[0, 3, 7, 8, 10]),
@@ -42,6 +48,9 @@ const SCALE: f32 = 0.5;
 
 /// What a frame must show at a stage point: (package, frame, x, y, colour).
 const PROBES: &[(&str, u32, f32, f32, u32)] = &[
+    // The door movie clip and the button, on the authored timeline (scripts never change it).
+    ("interactive", 0, 90.0, 90.0, 0x8D5524),
+    ("interactive", 9, 240.0, 90.0, 0x2A9D8F),
     // Both sides of a shared edge, the hole, the hex-coordinate triangle.
     ("shapes", 0, 45.0, 50.0, 0xD9452B),
     ("shapes", 0, 80.0, 30.0, 0x2B6CD9),
@@ -171,4 +180,75 @@ fn every_package_opens_with_file_open_and_round_trips_through_the_file_format() 
         t.execute("file.open", &json!({"path": path.display().to_string()})).unwrap();
         assert!(s.doc == t.doc, "{case}: the saved document opens differently");
     }
+}
+
+/// Animate's raw shapes open as raw shapes, each keyframe's merged into one drawing (ADR 0042),
+/// and look as they did: the goldens still match. A raw outline is one stroke per side (ADR
+/// 0031), so at a corner two round caps overlap where one round join was and their antialiased
+/// edges add up: a few corner pixels may be darker (47 of the shapes frame's 14,400).
+#[test]
+fn raw_shapes_open_raw_merged_and_unchanged_to_the_eye() {
+    let mut failures = Vec::new();
+    let (mut raw_total, mut merged_total) = (0, 0);
+    for (case, frames) in FRAMES.iter().filter(|(c, _)| !matches!(*c, "text")) {
+        let mut s = Session::default();
+        let info = s.execute("file.open", &json!({"path": corpus().join(case).display().to_string()})).unwrap_or_else(|e| panic!("{case}: {e}"));
+        let raw = s.doc.scenes.iter().flat_map(|sc| sc.timeline.layers.iter()).chain(s.doc.library.iter().flat_map(|sym| sym.timeline.layers.iter())).flat_map(|l| l.keyframes.iter()).flat_map(|k| k.elements.iter()).filter(|e| matches!(&e.kind, anicraft_engine::doc::ElementKind::Shape(sh) if sh.merge)).count();
+        raw_total += raw;
+        // (Keyframes a tween joins keep their shapes as they came.)
+        merged_total += info["merged_keyframes"].as_u64().unwrap_or(0);
+        for &f in *frames {
+            let (w, h, rgba) = render(&s.doc, f);
+            let golden = corpus().join(case).join("golden").join(format!("frame-{f:03}.png"));
+            let corners = golden::Tolerance { pixels: 0.005, ..golden::DEFAULT };
+            if let Err(e) = golden::compare(&golden, &format!("{case}-merged-frame-{f:03}"), w, h, &rgba, corners) {
+                failures.push(e);
+            }
+        }
+    }
+    assert!(raw_total > 0 && merged_total > 0, "the corpus has raw shapes, merged: {raw_total} shapes, {merged_total} keyframes");
+    assert!(failures.is_empty(), "merged raw shapes look different:\n{}", failures.join("\n"));
+}
+
+/// Each package as a `.fla` file, in every zip layout (ADR 0054), opens with `file.open` as
+/// the same document as its folder and renders the same golden frames.
+#[test]
+fn every_package_opens_from_a_fla_with_the_same_golden_frames() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("xfl-corpus-fla");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for (case, frames) in FRAMES {
+        let folder = corpus().join(case);
+        let mut s = Session::default();
+        let want = s.execute("file.open", &json!({"path": folder.display().to_string()})).unwrap_or_else(|e| panic!("{case}: {e}"));
+        // Animate's own pointer file inside the folder opens it too.
+        let mut x = Session::default();
+        x.execute("file.open", &json!({"path": folder.join(format!("{case}.xfl")).display().to_string()})).unwrap_or_else(|e| panic!("{case}.xfl: {e}"));
+        assert!(x.doc == s.doc, "{case}: the .xfl opens differently from its folder");
+        let files = pack::package(&folder);
+        for (n, v) in pack::VARIANTS.iter().enumerate() {
+            let path = dir.join(format!("{case}-{n}.fla"));
+            std::fs::write(&path, pack::pack(&files, v)).unwrap();
+            let mut t = Session::default();
+            let got = t.execute("file.open", &json!({"path": path.display().to_string()})).unwrap_or_else(|e| panic!("{case}, {}: {e}", v.name));
+            assert_eq!(got["report"], want["report"], "{case}, {}", v.name);
+            assert!(t.doc == s.doc, "{case}, {}: the .fla opens differently from the folder", v.name);
+        }
+        // The goldens (imported without fonts, as they were made), rendered from the .fla in
+        // its most unusual layout.
+        let fla = pack::pack(&files, &pack::VARIANTS[pack::VARIANTS.len() - 1]);
+        let (doc, _) = anicraft_xfl::import_fla_with_fonts(&fla, &Fonts::from_faces(Vec::new())).unwrap_or_else(|e| panic!("{case}: {e}"));
+        for &f in *frames {
+            let (w, h, rgba) = render(&doc, f);
+            let golden = corpus().join(case).join("golden").join(format!("frame-{f:03}.png"));
+            if let Err(e) = golden::compare(&golden, &format!("{case}-fla-frame-{f:03}"), w, h, &rgba, golden::DEFAULT) {
+                failures.push(e);
+            }
+            checked += 1;
+        }
+    }
+    assert!(failures.is_empty(), "{} of {checked} .fla frames differ from their goldens:
+{}", failures.len(), failures.join("
+"));
 }

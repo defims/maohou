@@ -153,19 +153,37 @@
             g.globalAlpha = bitmap ? Math.min(Math.max(it.c[0], 0), 1) : 1;
             set(g, it.m);
             g.fillStyle = style;
+            // A bitmap without Allow Smoothing keeps hard pixel edges (ADR 0050).
+            const hard = bitmap && movie.paints[it.f].px === true;
+            if (hard) g.imageSmoothingEnabled = false;
             g.fill(path, it.eo ? "evenodd" : "nonzero");
+            if (hard) g.imageSmoothingEnabled = true;
             g.globalAlpha = 1;
           }
         }
         if (it.s) {
-          const w = it.s[4] * AniCraft.meanScale(it.m) * k;
+          const scale = AniCraft.meanScale(it.m);
+          const w = it.s[4] * scale * k;
           if (w > 0 && Number.isFinite(w)) {
             g.setTransform(k, 0, 0, k, 0, 0);
             g.lineWidth = w / k;
-            g.lineJoin = "round";
-            g.lineCap = "round";
+            // Caps, joins and dashes (stage units: local lengths × the mean scale, like the width).
+            const st = it.k;
+            g.lineJoin = st ? st.j : "round";
+            g.lineCap = st ? st.c : "round";
+            if (st) g.miterLimit = st.ml;
+            const dashed = st && st.d && st.d.length > 0;
+            if (dashed) {
+              g.setLineDash(st.d.map((x) => x * scale));
+              g.lineDashOffset = (st.o || 0) * scale;
+            }
             g.strokeStyle = css(AniCraft.applyEffect(it.c, it.s));
             g.stroke(stagePath(path, it.m));
+            if (dashed) {
+              g.setLineDash([]);
+              g.lineDashOffset = 0;
+            }
+            if (st) g.miterLimit = 10;
           }
         }
       },
@@ -332,5 +350,5 @@
     report(player.start());
     resize();
     requestAnimationFrame(tick);
-  });
+  }).catch((e) => console.error("AniCraft: the movie couldn't start", e));
 })();

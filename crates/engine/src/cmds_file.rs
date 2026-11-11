@@ -187,14 +187,19 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         } else {
             anicraft_xfl::import_path(&path)
         };
-        let (doc, report) = imported.map_err(|e| EngineError::Format(format!("{}: {e}", path.display())))?;
+        let (mut doc, report) = imported.map_err(|e| EngineError::Format(format!("{}: {e}", path.display())))?;
+        // Raw artwork arrives one shape per style: each keyframe's becomes one merged drawing,
+        // as it was in Animate (ADR 0042).
+        let merged = crate::merge::merge_document(&mut doc);
         s.replace_document(doc, None);
         let mut info = s.info();
         info["imported"] = json!(path.display().to_string());
         info["report"] = json!(report.summary());
         info["skipped"] = json!(report.skipped);
         info["kept"] = json!(report.kept);
+        info["runs"] = json!(report.runs);
         info["missing_fonts"] = json!(report.missing_fonts);
+        info["merged_keyframes"] = json!(merged);
         return Ok(info);
     }
     let doc = format::load(&path)?;
@@ -312,7 +317,7 @@ fn import_to_stage(s: &mut Session, p: &Value) -> Result<Value> {
         // Clips and masks (ADR 0021): a folder named after the file holding, top first, each
         // run of artwork, with a mask layer over the runs that are masked.
         let made = layers.len() + masks + 1;
-        let tl = s.doc.timeline(s.scene);
+        let tl = s.timeline();
         if tl.layers.len() + made > 1000 {
             return Err(EngineError::State(format!("importing {} would make {made} layers; a timeline holds at most 1000", path.display())));
         }
@@ -357,7 +362,7 @@ fn import_to_stage(s: &mut Session, p: &Value) -> Result<Value> {
             cl.keyframes = keys(els);
             stack.push(cl);
         }
-        let tl = s.doc.timeline_mut(s.scene);
+        let tl = crate::editing::edited_mut(&mut s.doc, s.scene, &s.editing);
         for (k, l) in stack.into_iter().enumerate() {
             tl.layers.insert((at + k).min(tl.layers.len()), Arc::new(l));
         }
@@ -366,7 +371,7 @@ fn import_to_stage(s: &mut Session, p: &Value) -> Result<Value> {
         s.layer = lid;
         (lid, ids, made, Some(fid.0))
     };
-    s.selection = ids.clone();
+    s.select_only(ids.iter().copied());
     Ok(json!({
         "layer": layer_id.0,
         "folder": folder,

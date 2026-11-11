@@ -81,7 +81,7 @@ hand from the public descriptions of the format.
      per-property curves keep the slider's ease and are reported;
    * reverse loop modes play forward and are reported;
    * what AniCraft draws the nearest way is now reported instead of silently changed: caps and
-     joins other than round, gradient and bitmap strokes, repeating and reflecting gradients,
+     joins other than round (drawn as they are since ADR 0046), gradient and bitmap strokes, repeating and reflecting gradients,
      focal points, elliptical radial gradients, linear-RGB gradients, and extra tween spins.
 
 ## Consequences
@@ -95,6 +95,8 @@ hand from the public descriptions of the format.
   it can share our misreadings of the format. Where we were unsure (the default symbol type,
   the custom ease and shape-hint forms) this ADR says so, and a file saved by Animate that
   disagrees should become a corpus fix, not a special case.
-* Not in this slice: `.fla` (zip) variants of the corpus, sound and video items, motion tweens
+* `.fla` (zip) variants of the corpus are checked since ADR 0054: every package, packed nine
+  ways, imports identically to its folder and renders the same goldens.
+* Not in this slice: sound and video items, motion tweens
   with property curves, and per-character text styles (all reported, and kept for their own
   slices).

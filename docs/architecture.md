@@ -36,7 +36,7 @@ app/                         workspace root; the root package is the desktop app
     doc       L1  Document model + timeline evaluation (keyframes, tweens, easing, symbols) + player
     render    L2  CPU oracle rasterizer, paints/gradients, compositor, PNG encode
     engine    L3  Session (document + history + selection + playhead), command registry, file format
-    gpu       L3  wgpu stage renderer over the oracle's prepared fills (ADR 0019, 0029, 0031; shell feature `gpu-stage`, on by default)
+    gpu       L3  wgpu stage renderer over the oracle's prepared fills (ADR 0019, 0029, 0032, 0048; shell feature `gpu-stage`, on by default)
     cli       L4  `anicraft-cli`: info / render / render-seq / commands / run / serve (JSON-lines)
   src/        L5  egui shell: menus (from registry), tools, stage, timeline, properties, library
   docs/           requirements, architecture, roadmap
@@ -65,7 +65,8 @@ Document
 ├── stage: width, height, fps, background
 ├── timeline: Timeline                 (main scene; scenes list arrives in M2)
 │   └── layers: [Layer]                (index 0 = top of the stack, as in the timeline panel)
-│       ├── name, visible, locked, outline, depth, volume, muted, kind (Normal | Guide | Mask | Folder | Camera)
+│       ├── name, visible, locked, outline, depth, volume, muted, kind (Normal | Guide | Mask | Folder | Camera | Armature),
+│       │   armature?: bones joining symbol instances (armature layer; ADR 0043)
 │       └── keyframes: [Keyframe]      (sorted by start, spans do not overlap)
 │           ├── start, duration        (frames covered by this keyframe)
 │           ├── elements: [Element]
@@ -99,6 +100,13 @@ when they are compatible:
   tween's first keyframe steer it: placed hints join subpaths, cut both outlines at the hinted
   points and match the pieces in order by length.
 
+**Armatures** (ADR 0043): on an armature layer, bones join symbol instances (a joint on the
+parent, the child turning about it) and each keyframe's `pose` holds joint angles, tweened at
+the span's eased time. `evaluate_layer_elements` places the instances by forward kinematics
+(`W_child = R_joint(angle) · W_parent · rest`), so every export and the player see poses;
+`armature::solve` finds a pose from a dragged bone end by cyclic coordinate descent with joint
+limits and pins.
+
 **The camera** (ADR 0027): a scene's top layer may be its camera layer. `evaluate` (every
 export), `evaluate_player` and `evaluate_scene_camera` draw each top-level layer through
 `Camera::view(stage, layer.depth)`: the camera's centre at the middle of the output, zoomed
@@ -121,7 +129,7 @@ iterations and a bisection fallback, the same model CSS uses.
 
 Interactivity is time as a function too (ADR 0013, ADR 0024). Keyframes and button or movie
 clip instances carry lists of typed actions (`anicraft-actions`) or a frame-script plug-in
-entry, or keep a script in another language verbatim (ADR 0013 tier 1: `FrameScript::Source`, which the player skips); nothing in the document changes while a movie plays. `player::step(doc, &state,
+entry, or keep a script in another language verbatim (ADR 0013 tier 1: `FrameScript::Source`; ActionScript 3.0 in the timeline subset compiles once, in `anicraft_actions::as3`, to actions and mouse listeners the player runs, tier 2); nothing in the document changes while a movie plays. `player::step(doc, &state,
 &events, scripts) -> Step` advances a `PlayerState` (the main timeline's scene and playhead,
 each movie clip instance's playhead by its element-id path, script-set properties, the
 pointer) by one frame, runs the actions of the frames entered and routes pointer events to
@@ -154,7 +162,7 @@ frame changes), and `doc::sound::trigger` turns them into voices for Test Movie.
 DisplayList ──► for each item:
                   flatten Bézier path under (view × item) transform, tolerance 0.1 px
                   ├─ fill:   lines ──► signed-area coverage accumulator (bbox-sized)
-                  └─ stroke: polylines ──► stroker (segment quads + round joins/caps) ──► accumulator
+                  └─ stroke: polylines ──► stroker (segment quads + joins/caps, dashes; ADR 0046) ──► accumulator
                 coverage ──► fill rule (non-zero / even-odd) ──► paint shader ──► src-over blend
                            (rows of the bbox in parallel with rayon)
 ```
@@ -177,11 +185,16 @@ DisplayList ──► for each item:
   Output is bit-identical to serial. Numbers are in [performance.md](performance.md).
 
 **GPU stage** ([ADR 0019](adr/0019-gpu-stage.md), [ADR 0029](adr/0029-gpu-stage-direct-masks-groups.md),
-[ADR 0032](adr/0032-gpu-stage-bitmaps-filters-default.md); the shell's `gpu-stage` feature, on
-by default, and the default stage renderer): `render::prepare_scene` hands the oracle's own
-prepared fills, with their clips, groups, bitmap shaders and filtered layers, to `anicraft-gpu`, which bins edge pieces into
-16 × 16 tiles with per-row backdrops (CPU, parallel) and writes each tile's stream of entries
-in drawing order, with clip-coverage and group open/close entries. One compute pass computes
+[ADR 0032](adr/0032-gpu-stage-bitmaps-filters-default.md), [ADR 0048](adr/0048-gpu-binning-and-hairlines.md);
+the shell's `gpu-stage` feature, on by default, and the default stage renderer):
+`render::prepare_scene` hands the oracle's own prepared fills, with their clips, groups, bitmap
+shaders and filtered layers, to `anicraft-gpu`, which bins edge pieces into 16 × 16 tiles with
+an integer backdrop per tile and steps on the tiles' left edges, and writes each tile's stream
+of entries in drawing order. Heavy scenes without masks or groups are binned on the GPU (count,
+prefix sum, scatter and tile-list passes; the CPU only lays out the points and the fills'
+ranges, and sizes every buffer up front, so nothing is read back); the rest, with their
+clip-coverage and group open/close entries, on the CPU, which is also the reference. Outline
+mode's hairlines are one piece per segment, covered by distance in both renderers. One compute pass computes
 each pixel's exact area coverage and composites it as the oracle's band compositor does (clip
 coverage, a per-pixel group stack, the W3C blend modes). On the window's wgpu device it draws
 each stage tile into a texture egui shows as it is (no readback); otherwise on a headless
@@ -240,6 +253,12 @@ under it. Tools are on the left, the stage in the centre over a pasteboard, and 
 Library on the right. The timeline at the bottom has layer rows (eye and lock toggles), a frame
 grid with keyframe dots, tween spans and a playhead, plus transport controls and
 fps/time readouts. Theme tokens live in `theme.rs`.
+
+Interface text is English in the code and translated as it is drawn (`src/i18n/`,
+[ADR 0040](adr/0040-interface-languages.md), [docs/localisation.md](localisation.md)): `tr!`
+looks the English up in the craft-i18n catalogs build.rs embedded, and menus translate the
+registry's labels, so nothing below the shell (commands, the CLI, MCP, the file format) sees
+another language.
 
 The stage texture comes from the CPU renderer and is cached per
 `(revision, frame, zoom, viewport)`. Overlays (selection boxes, drag previews, the stage frame)

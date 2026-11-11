@@ -8,6 +8,7 @@ pub mod paint;
 pub mod raster;
 pub mod stroke;
 pub mod filters;
+pub mod hairline;
 pub mod html;
 pub mod lottie;
 pub mod svg;
@@ -218,9 +219,16 @@ pub fn render(dl: &DisplayList, view: &View) -> Result<(Pixmap, RenderStats), Re
                 open.push(OpenGroup { id: g, buf: vec![[0.0; 4]; rows.len()], dirty: NO_PIXELS });
             }
             let mask = op.clip.map(|c| band_clips.get(&clips, c, band, w, &mut cov, &mut row));
-            cov.reset(b);
-            for poly in &op.polys {
-                cov.add_polygon(poly);
+            if op.hairline {
+                cov.reset_direct(b);
+                for poly in &op.polys {
+                    cov.add_hairline(poly);
+                }
+            } else {
+                cov.reset(b);
+                for poly in &op.polys {
+                    cov.add_polygon(poly);
+                }
             }
             match open.last_mut() {
                 Some(top) => {
@@ -297,6 +305,9 @@ pub struct Fill {
     /// [`render`] draws it: the layer's pixel at `(x, y)` is at `(x - x0, y - y0)` of its
     /// `bounds`, transparent outside.
     pub layer: Option<u32>,
+    /// A hairline (outline mode, ADR 0048): `polys` are open polylines (a closed one repeats
+    /// its first point), drawn by [`hairline`]'s distance coverage; `rule` doesn't apply.
+    pub hairline: bool,
 }
 
 /// A filtered group (a symbol instance with filters) as [`render`] draws it: its items on
@@ -390,7 +401,7 @@ pub fn prepare_scene(dl: &DisplayList, view: &View) -> Result<(Scene, RenderStat
         op.bounds = op.bounds.intersect(&clips.bounds(c));
         !op.bounds.is_empty()
     });
-    let fill = |op: Prepared| Fill { polys: op.polys, rule: op.rule, shader: op.shader, bounds: op.bounds, clip: op.clip, group: op.group, layer: op.layer };
+    let fill = |op: Prepared| Fill { polys: op.polys, rule: op.rule, shader: op.shader, bounds: op.bounds, clip: op.clip, group: op.group, layer: op.layer, hairline: op.hairline };
     let mut fills = Vec::with_capacity(ops.len());
     for op in ops {
         stats.edges += op.polys.iter().map(Vec::len).sum::<usize>();
@@ -472,6 +483,7 @@ impl FilterSetup {
             masks: None,
             group: Some(self.group),
             layer: None,
+            hairline: false,
         }
     }
 }
@@ -663,6 +675,8 @@ struct Prepared {
     group: Option<u32>,
     /// A filtered layer's pixels instead of `shader` ([`Fill::layer`]; only in [`prepare_scene`]).
     layer: Option<u32>,
+    /// A hairline ([`Fill::hairline`]).
+    hairline: bool,
 }
 
 /// The clips of a display list: their mask artwork and where each can be non-zero.
@@ -786,12 +800,36 @@ fn prepare(item: &DisplayItem, view: &Affine, surface: IRect) -> Vec<Prepared> {
         return out;
     }
     let (clip, masks, group) = (item.clip, item.masks, item.group);
+    // (Mask artwork is never outlined: it draws nothing of its own.)
+    if let Some(color) = item.outline.filter(|_| !is_mask) {
+        // Outline mode: a hairline in the layer colour, no fill (ADR 0048).
+        let shader = Shader::Solid(premultiply(color));
+        if shader.is_solid().is_some_and(|c| c[3] <= 0.0) {
+            return out;
+        }
+        let polys: Vec<Vec<Vec2>> = lines
+            .into_iter()
+            .map(|l| {
+                let mut pts = l.points;
+                if l.closed
+                    && let Some(&first) = pts.first()
+                {
+                    pts.push(first);
+                }
+                pts
+            })
+            .collect();
+        if let Some(b) = hairline::bounds(&polys, surface) {
+            out.push(Prepared { polys, rule: FillRule::NonZero, shader, bounds: b, clip, masks, group, layer: None, hairline: true });
+        }
+        return out;
+    }
     let mut push = |polys: Vec<Vec<Vec2>>, rule, shader: Shader| {
         if shader.is_solid().is_some_and(|c| c[3] <= 0.0) {
             return;
         }
         if let Some(b) = pixel_bounds(&polys, surface) {
-            out.push(Prepared { polys, rule, shader, bounds: b, clip, masks, group, layer: None });
+            out.push(Prepared { polys, rule, shader, bounds: b, clip, masks, group, layer: None, hairline: false });
         }
     };
 
@@ -799,43 +837,18 @@ fn prepare(item: &DisplayItem, view: &Affine, surface: IRect) -> Vec<Prepared> {
         push(lines.iter().map(|l| l.points.clone()).collect(), item.fill_rule, Shader::Solid([1.0; 4]));
         return out;
     }
-    if let Some(color) = item.outline {
-        // Outline mode: hairline in the layer colour, no fill.
-        push(stroke::stroke_polygons(&lines, 0.5), FillRule::NonZero, Shader::Solid(premultiply(color)));
-        return out;
-    }
     // The stroke is outlined from the flattened lines first, so the fill can then take them
     // without a copy; it is still drawn after the fill.
     let stroke = item.stroke.as_ref().and_then(|st| {
-        let mut fx: ColorEffect = item.color;
-        let mut pw = st.width * m.mean_scale();
-        if !(pw.is_finite() && pw > 0.0) {
-            return None;
-        }
-        let shader = |fx: &ColorEffect| Shader::new(&Paint::Solid(st.color), &m, fx, None);
-        if let Some(profile) = &st.profile {
-            // Variable width (ADR 0018). Thin strokes fade by their widest part instead.
-            let widest = pw * profile.max_factor();
-            if !(widest.is_finite() && widest > 0.0) {
-                return None;
-            }
-            if widest < 1.0 {
-                fx.alpha *= widest;
-                pw /= widest;
-            }
-            let polys = stroke::variable_polygons(&lines, pw * 0.5, profile, m.inverse().as_ref(), m.determinant() < 0.0);
-            return Some((polys, shader(&fx)));
-        }
-        if pw < 1.0 {
-            // Thin strokes: keep a 1 px footprint and fade by width (avoids dropouts).
-            fx.alpha *= pw;
-            pw = 1.0;
-        }
-        Some((stroke::stroke_polygons(&lines, pw * 0.5), shader(&fx)))
+        // Caps, joins, dashes (ADR 0046) and width profiles (ADR 0018); thin strokes and
+        // sub-pixel dash patterns fade instead of dropping out.
+        let (polys, alpha) = stroke::stroke_geometry(&lines, st, &m, true)?;
+        let fx = ColorEffect { alpha: item.color.alpha * alpha, ..item.color };
+        Some((polys, Shader::new(&Paint::Solid(st.color), &m, &fx, None)))
     });
     if let Some(fill) = &item.fill {
         let polys: Vec<Vec<Vec2>> = lines.into_iter().map(|l| l.points).collect();
-        push(polys, item.fill_rule, Shader::new(fill, &m, &item.color, item.image.as_ref()));
+        push(polys, item.fill_rule, Shader::new(fill, &m, &item.color, item.image.as_ref()).smoothed(item.smooth));
     }
     if let Some((polys, shader)) = stroke {
         push(polys, FillRule::NonZero, shader);
@@ -920,6 +933,7 @@ mod tests {
             guide: false,
             group: None,
             image: None,
+            smooth: true,
         }
     }
 
@@ -1002,7 +1016,7 @@ mod tests {
     fn prepared_scenes_match_the_renderers_preparation_and_name_what_needs_more() {
         // A filled, stroked square and an off-screen circle: fill then stroke, one culled.
         let mut sq = item(Path::rect(2.0, 2.0, 8.0, 8.0), Paint::Solid(Rgba::BLACK));
-        sq.stroke = Some(anicraft_doc::Stroke { color: Rgba::WHITE, width: 2.0, profile: None });
+        sq.stroke = Some(anicraft_doc::Stroke::new(Rgba::WHITE, 2.0));
         let off = item(Path::ellipse(500.0, 500.0, 10.0, 10.0), Paint::Solid(Rgba::BLACK));
         let dl = list(vec![sq.clone(), off]);
         let (scene, st) = prepare_scene(&dl, &view(16, 16)).unwrap();
@@ -1195,18 +1209,34 @@ mod tests {
     #[test]
     #[ignore = "measurement"]
     fn variable_stroke_cost() {
-        let strokes = |profile: Option<anicraft_doc::WidthProfile>| {
+        use anicraft_doc::{Cap, Dash, Join, StrokeStyle};
+        let strokes = |profile: Option<anicraft_doc::WidthProfile>, style: StrokeStyle| {
             let items = (0..300)
                 .map(|i| {
                     let (x, y) = ((i % 20) as f32 * 64.0, (i / 20) as f32 * 48.0);
                     let mut p = Path::new();
                     p.move_to(Vec2::new(x, y + 40.0)).cubic_to(Vec2::new(x + 10.0, y - 20.0), Vec2::new(x + 50.0, y + 80.0), Vec2::new(x + 60.0, y + 10.0));
-                    stroked(p, 6.0, profile.clone())
+                    let mut it = stroked(p, 6.0, profile.clone());
+                    it.stroke = it.stroke.map(|st| st.with_style(style.clone()));
+                    it
                 })
                 .collect();
             list(items)
         };
-        for (name, dl) in [("uniform", strokes(None)), ("taper_both", strokes(anicraft_doc::ProfilePreset::TaperBoth.profile())), ("bulge", strokes(anicraft_doc::ProfilePreset::Bulge.profile()))] {
+        let round = StrokeStyle::default();
+        let miter = StrokeStyle { cap: Cap::Square, join: Join::Miter, ..StrokeStyle::default() };
+        let dashed = StrokeStyle { cap: Cap::Butt, dash: Dash::dashed(8.0, 4.0), ..StrokeStyle::default() };
+        let dotted = StrokeStyle { dash: Dash::dotted(4.0), ..StrokeStyle::default() };
+        let taper = || anicraft_doc::ProfilePreset::TaperBoth.profile();
+        for (name, dl) in [
+            ("uniform", strokes(None, round.clone())),
+            ("taper_both", strokes(taper(), round)),
+            ("bulge", strokes(anicraft_doc::ProfilePreset::Bulge.profile(), StrokeStyle::default())),
+            ("square + miter", strokes(None, miter)),
+            ("dashed 8/4", strokes(None, dashed.clone())),
+            ("dotted 4", strokes(None, dotted)),
+            ("taper_both dashed", strokes(taper(), dashed)),
+        ] {
             let mut ms: Vec<f64> = (0..9)
                 .map(|_| {
                     let t = std::time::Instant::now();

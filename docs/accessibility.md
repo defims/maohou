@@ -25,6 +25,10 @@ work yet. Design decisions are in ADR 0022; the rules for contributors are in
   shortcut works, including Enter (play) and the arrows (nudge). With a button or checkbox
   focused, the other shortcuts still work but Enter, Space and the arrows belong to it. In a
   text field every key types. Esc leaves a field.
+* **Library items without dragging** (ADR 0053): after clicking a Library row, **Enter** places
+  the selected items at the centre of the view on the active layer (sounds on its keyframe at
+  the playhead), as dragging them onto the stage does; F2 renames and Delete deletes. Place on
+  Stage is also a button under the list and in each row's right-click menu.
 * Frames are reached with `,` and `.` (previous and next), Home and End, F5/F6/F7 to insert,
   and Shift+`,`/`.`; layers with the layer rows (Tab from the timeline anchor) and the
   Up/Down buttons under them.
@@ -121,5 +125,8 @@ cargo test --bin anicraft palette                      # the contrast checks
   right-hand panels, timeline, stage). Ctrl+F6 gives the panel order listed above.
 * **Scroll bars inside lists** have no name (egui doesn't offer one).
 * **Slider tracks** are dim in high contrast; their handles and number fields are outlined.
+* **Names follow the interface language** (ADR 0040): the audit runs the window in the
+  pseudo-locale too and fails on a name that stayed English. Document text (layer and symbol
+  names) is announced as written.
 * **Manual passes with Narrator, VoiceOver and Orca** are still to do on real machines for each
   platform. The automated audit checks names and roles, not how each reader phrases them.

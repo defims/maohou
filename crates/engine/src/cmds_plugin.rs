@@ -31,10 +31,10 @@ const MAX_ELEMENTS: usize = 10_000;
 /// a namespace this list doesn't know is refused until someone decides (a test checks that
 /// every registered namespace is known).
 pub fn plugin_may_call(id: &str) -> std::result::Result<(), &'static str> {
-    const DOCUMENT: &[&str] = &["draw", "edit", "element", "symbol", "arrange", "modify", "library", "text", "scene", "path", "paint", "timeline", "layer", "align", "doc", "motion", "sound", "stroke", "tween", "actions", "instance", "camera", "bone", "switch", "script"];
+    const DOCUMENT: &[&str] = &["draw", "edit", "element", "symbol", "arrange", "modify", "library", "text", "scene", "path", "paint", "timeline", "layer", "align", "doc", "motion", "sound", "stroke", "tween", "actions", "instance", "camera", "bone", "rig", "switch", "script", "raw", "frames"];
     match id {
         "edit.undo" | "edit.redo" => Err("a plug-in run is one undo step; it can't undo or redo"),
-        "edit.cut" | "edit.copy" | "edit.paste" | "edit.paste_in_place" | "timeline.cut_frames" | "timeline.copy_frames" | "timeline.paste_frames" => {
+        "edit.cut" | "edit.copy" | "edit.paste" | "edit.paste_in_place" | "timeline.cut_frames" | "timeline.copy_frames" | "timeline.paste_frames" | "frames.cut" | "frames.copy" | "frames.paste" => {
             Err("plug-ins don't use your clipboard")
         }
         _ => match id.split('.').next().unwrap_or("") {
@@ -75,8 +75,7 @@ impl Host for SessionHost<'_> {
 fn document_view(s: &Session) -> Value {
     let st = &s.doc.stage;
     let layers: Vec<Value> = s
-        .doc
-        .timeline(s.scene)
+        .timeline()
         .layers
         .iter()
         .map(|l| json!({"id": l.id.0, "name": l.name, "kind": format!("{:?}", l.kind).to_lowercase(), "visible": l.visible, "locked": l.locked, "parent": l.parent.map(|p| p.0)}))
@@ -90,7 +89,7 @@ fn document_view(s: &Session) -> Value {
         "frames": s.frame_count(),
         "layer": s.layer.0,
         "layers": layers,
-        "selection": s.selection.iter().map(|e| e.0).collect::<Vec<_>>(),
+        "selection": s.selection.id_list(),
     })
 }
 
@@ -118,7 +117,7 @@ fn elements_view(s: &Session, req: &Value) -> std::result::Result<Value, String>
         *e = e.union(&r);
     }
     let mut out = Vec::new();
-    for e in s.visible_elements().iter().filter(|e| !only_selected || s.selection.contains(&e.id)) {
+    for e in s.visible_elements().iter().filter(|e| !only_selected || s.selection.contains(s.layer, e.id)) {
         if out.len() >= MAX_ELEMENTS {
             break;
         }
@@ -126,7 +125,7 @@ fn elements_view(s: &Session, req: &Value) -> std::result::Result<Value, String>
         let mut v = json!({
             "id": e.id.0,
             "name": e.name,
-            "selected": s.selection.contains(&e.id),
+            "selected": s.selection.contains(s.layer, e.id),
             "transform": e.transform.m,
             "bounds": if b.is_empty() { Value::Null } else { json!([b.min.x, b.min.y, b.max.x - b.min.x, b.max.y - b.min.y]) },
             "alpha": e.color.alpha,

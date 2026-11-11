@@ -5,7 +5,7 @@
 //! actually copied. History is bounded by an estimate of that unique memory, not by step count,
 //! so a thousand small nudges are cheap while one huge import is still evictable.
 
-use anicraft_doc::{Document, Element, ElementId, ElementKind, Keyframe, Layer, LayerId, Symbol};
+use anicraft_doc::{Document, Element, ElementKind, Keyframe, Layer, LayerId, Symbol};
 use std::collections::{HashSet, VecDeque};
 use std::mem::size_of;
 use std::sync::Arc;
@@ -28,9 +28,11 @@ pub struct Snapshot {
     pub doc: Document,
     pub state: StateId,
     pub scene: usize,
+    /// The symbols open for editing (ADR 0045).
+    pub editing: Vec<crate::editing::EditLevel>,
     pub frame: u32,
     pub layer: LayerId,
-    pub selection: Vec<ElementId>,
+    pub selection: crate::Selection,
     /// Estimated bytes this snapshot keeps alive that the neighbouring state does not share.
     pub bytes: usize,
 }
@@ -243,6 +245,6 @@ pub fn unique_bytes(old: &Document, new: &Document) -> usize {
 
 /// Estimated total bytes of a document (as if nothing were shared). Used for reporting.
 pub fn document_bytes(doc: &Document) -> usize {
-    let empty = Document { stage: doc.stage, scenes: Vec::new(), library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), styles: Vec::new(), document_class: String::new(), maop_maohou: None, next_id: doc.next_id };
+    let empty = Document { stage: doc.stage, scenes: Vec::new(), library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Default::default(), styles: Vec::new(), maop_maohou: None, document_class: String::new(), next_id: doc.next_id };
     unique_bytes(doc, &empty)
 }
