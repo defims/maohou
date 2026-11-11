@@ -82,6 +82,9 @@ pub(crate) struct Builder<'a> {
     pub duration: u32,
     /// The project's playback range `(start, end)`, 0-based with `end` exclusive.
     pub frames: (u32, u32),
+    /// The physics-enabled group's world (ADR 0106), collected during the layer walk and
+    /// put on the scene when the walk found one.
+    pub world: Option<anicraft_doc::PhysicsWorld>,
 }
 
 impl<'a> Builder<'a> {
@@ -168,10 +171,14 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
     let from_px = to_px.inverse().unwrap_or(Affine::IDENTITY);
 
     let frames = ((start as u64 - 1).clamp(0, MAX_FRAME as u64) as u32, (end as u64).clamp(1, MAX_FRAME as u64) as u32);
-    let mut b = Builder { doc, report: Report::default(), fonts, faces: HashMap::new(), read, to_px, from_px, dpi, frame: start, duration, frames };
+    let mut b = Builder { doc, report: Report::default(), fonts, faces: HashMap::new(), read, to_px, from_px, dpi, frame: start, duration, frames, world: None };
 
     // Render/document settings without a slot, counted when non-default.
     document_settings(&mut b.report, pd);
+    // The document soundtrack: a library sound (its movie slot follows a Moho specimen).
+    if let Some(st) = json::string(get(pd, "soundtrack")).filter(|s| !s.is_empty()) {
+        crate::audio::soundtrack(&mut b, &st);
+    }
     named_styles(&mut b, &root);
     let scene_anim = scene_animation(&mut b, get(&root, "animated_values").unwrap_or(&empty));
     if array(get(&root, "layercomps")).is_some_and(|s| !s.is_empty()) {
@@ -201,6 +208,8 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
     if (range_start, range_end) != (0, content) && range_start < range_end {
         scene.frames = Some((range_start, range_end));
     }
+    // The physics world the layer walk collected (Moho's physics-enabled group; ADR 0106).
+    scene.physics = b.world.take();
     b.doc.scenes.push(Arc::new(scene));
 
     // The sidecar: the untouched original, the `.maop` dialect's `maop_maohou` node, so a
@@ -226,9 +235,6 @@ fn document_settings(report: &mut Report, pd: &Value) {
     }
     if json::integer(get(pd, "stereo_mode")).is_some_and(|v| v != 0) {
         report.skip("document stereo settings");
-    }
-    if !json::string(get(pd, "soundtrack")).is_none_or(|s| s.is_empty()) {
-        report.skip("document soundtrack");
     }
 }
 
@@ -327,13 +333,25 @@ pub fn import_path(path: &std::path::Path) -> Result<(Document, Report), MohoErr
         }
         let data = std::fs::read(path)?;
         let archive = Archive::open(&data)?;
+        let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
         let read = |p: &str| -> Result<Option<Vec<u8>>, MohoError> {
             // Zip entry names may carry either slash; try the given name, then the other one.
             if let Some(b) = archive.read(p)? {
                 return Ok(Some(b));
             }
             let swapped = if p.contains('\\') { p.replace('\\', "/") } else { p.replace('/', "\\") };
-            Ok(archive.read(&swapped)?)
+            if let Some(b) = archive.read(&swapped)? {
+                return Ok(Some(b));
+            }
+            // `relativeTo: "Project"`: media beside the package file (the audio fixture's
+            // `media/bounce.wav` sits in the project folder, not inside the zip).
+            let beside = !p.split('/').any(|c| c == ".." || c.is_empty()) && !p.contains(':');
+            if beside
+                && let Ok(b) = std::fs::read(dir.join(p))
+            {
+                return Ok(Some(b));
+            }
+            Ok(None)
         };
         return import_with(&read);
     }

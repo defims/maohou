@@ -18,8 +18,10 @@ mod hints;
 pub mod library;
 pub mod motion;
 pub mod path_table;
+pub mod physics;
 pub mod points;
 pub mod rig;
+pub mod texture;
 pub mod width;
 pub mod stroke_style;
 pub mod player;
@@ -33,7 +35,9 @@ pub use easing::Easing;
 pub use hints::{HINT_TOLERANCE, HintSide, MAX_SHAPE_HINTS, ShapeHint, hint_index, hint_letter, nearest_outline, placed_on, shapes_centre};
 pub use library::{FolderId, LibraryEntry, LibraryFolder, LibraryItem, LibraryTree, NameError};
 pub use motion::{MotionTween, OnPath, Pin, PinError, Property, PropertyKey, Props, Track, motion_path};
+pub use physics::{Baked, BakedBody, PhysicsBody, PhysicsError, PhysicsWorld, bake as bake_physics};
 pub use points::{PointTrack, Trim, path_point_count, rebuild as rebuild_path, trim as trim_path};
+pub use texture::{TextureMap, fit_affine, paint_for as texture_paint_for};
 pub use sound::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundFormat, SoundId, SoundSync};
 pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile};
 pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
@@ -294,17 +298,23 @@ pub struct Shape {
     /// ring is not a shape any more. Boxed: a rare feature that shouldn't grow every shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trim: Option<Box<Trim>>,
+    /// The shape's bitmap fill pinned to its path points (Moho's image-layer mesh warp;
+    /// ADR 0106): as the points animate, evaluation refits the fill's matrix from the
+    /// deformed path onto the pinned image coordinates, so the texture follows the warp.
+    /// `None` leaves the fill's own matrix in charge. Boxed like `trim`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<Box<TextureMap>>,
 }
 
 impl PartialEq for Shape {
     fn eq(&self, o: &Shape) -> bool {
-        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge && self.bind == o.bind && self.points == o.points && self.trim == o.trim
+        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge && self.bind == o.bind && self.points == o.points && self.trim == o.trim && self.texture == o.texture
     }
 }
 
 impl Shape {
     pub fn filled(path: Path, fill: Paint) -> Shape {
-        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }
+        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None, texture: None }
     }
     pub fn with_stroke(mut self, color: Rgba, width: f32) -> Shape {
         self.stroke = Some(Stroke::new(color, width));
@@ -820,6 +830,11 @@ pub struct Layer {
     /// An armature layer's bones (ADR 0043); `None` on every other kind of layer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub armature: Option<Arc<Armature>>,
+    /// The layer as a physics body (Moho's `physics.*`; ADR 0106): the bake pass simulates
+    /// it and writes the motion into its translation channel. `None` — Moho's default —
+    /// keeps the layer out of the simulation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physics: Option<PhysicsBody>,
 }
 
 fn is_zero2(v: &Vec2) -> bool {
@@ -866,6 +881,7 @@ impl PartialEq for Layer {
             && self.filters == o.filters
             && self.skeleton == o.skeleton
             && self.switch_to == o.switch_to
+            && self.physics == o.physics
     }
 }
 
@@ -904,6 +920,7 @@ impl Layer {
             skeleton: None,
             switch_to: Channel::default(),
             armature: None,
+            physics: None,
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by
@@ -1353,11 +1370,16 @@ pub struct Scene {
     /// `project_data.start_frame`/`end_frame`). `None` runs to the timeline's content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frames: Option<(u32, u32)>,
+    /// The scene's physics world (Moho's physics-enabled group; ADR 0106): gravity and wind
+    /// the bake pass simulates the scene's bodies under. `None` — every ordinary document —
+    /// has no simulation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physics: Option<PhysicsWorld>,
 }
 
 impl Scene {
     pub fn new(name: impl Into<String>) -> Scene {
-        Scene { name: name.into(), timeline: Timeline::default(), camera: SceneCamera::default(), markers: Vec::new(), frames: None }
+        Scene { name: name.into(), timeline: Timeline::default(), camera: SceneCamera::default(), markers: Vec::new(), frames: None, physics: None }
     }
     /// The frames this scene plays: the stored range, else the timeline's content.
     pub fn frame_range(&self) -> (u32, u32) {

@@ -21,7 +21,7 @@ pub const FORMAT_NAME: &str = "anicraft";
 /// v7: skeletons and bone bindings (ADR 0104).
 /// v8: switch layers, per-point position channels and trims, text strokes (ADR 0105).
 /// All optional keys: older files read as before.
-pub const FORMAT_VERSION: u32 = 8;
+pub const FORMAT_VERSION: u32 = 9;
 /// Largest file we will parse.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 /// Files smaller than this (compact) are pretty-printed for humans and diffs.

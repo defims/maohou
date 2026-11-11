@@ -4,7 +4,7 @@
 
 use crate::import::{import_json, Report};
 use crate::zip;
-use anicraft_geom::Vec2;
+use anicraft_geom::{PathCmd, Vec2};
 use serde_json::{json, Value};
 
 /// A minimal legal document (31 top-level keys are Moho's; only what the reader touches is
@@ -134,7 +134,7 @@ fn static_layer_transforms_bake_into_elements() {
     assert!((origin.x - 960.0).abs() < 1e-3 && (origin.y - 360.0).abs() < 1e-3, "origin+translation, y up → y down");
     // The shape's 0.5-inch x axis (160 px) turns upward (y flips with the rotation)…
     let along = el.transform.apply(anicraft_geom::Vec2::new(0.5, 0.0)) - origin;
-    assert!(along.x.abs() < 1e-3 && (along.y - (-320.0)).abs() < 1e-3, "rotation π/2 maps +x to +y (up = −y on screen), 2× scale");
+    assert!(along.x.abs() < 1e-3 && (along.y - (-320.0)).abs() < 1e-3, "rotation π/2 maps +x to +y (up = -y on screen), 2× scale");
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn unsupported_things_count_and_degrade() {
     let l = doc.timeline(0).layers.iter().find(|l| l.name == "L").unwrap();
     assert_eq!(l.filters, vec![anicraft_doc::Filter::Blur { blur_x: 80.0, blur_y: 80.0, quality: 3 }]);
     // The rig layer carries its bone: a bone layer kind, the angle channel y-flipped
-    // (Moho CCW +1.57 → screen clockwise −1.57), the untouched keys in the sidecar.
+    // (Moho CCW +1.57 → screen clockwise -1.57), the untouched keys in the sidecar.
     let rig = doc.timeline(0).layers.iter().find(|l| l.name == "Rig").unwrap();
     assert_eq!(rig.kind, anicraft_doc::LayerKind::Bone);
     let sk = rig.skeleton.as_ref().unwrap();
@@ -402,4 +402,263 @@ fn a_zip_package_reads_like_a_bare_file() {
     let (doc2, _) = crate::import_path(&path).unwrap();
     std::fs::remove_file(&path).ok();
     assert_eq!(doc, doc2);
+}
+
+fn tiny_png() -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, 2, 1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().unwrap();
+        wr.write_image_data(&[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    }
+    out
+}
+
+fn import_with_media(root: &Value, name: &str, bytes: Vec<u8>) -> (anicraft_doc::Document, Report) {
+    let read = move |p: &str| -> Result<Option<Vec<u8>>, crate::MohoError> { Ok((p == name).then_some(bytes.clone())) };
+    import_json(root.clone(), &read, None).unwrap_or_else(|e| panic!("import failed: {e}"))
+}
+
+/// The image-layer mesh warp (ADR 0106): a 2-inch-wide image layer whose 4-point cage
+/// becomes two textured triangles; a corner with an animated position channel rides both
+/// triangles as point tracks with pinned image coordinates, and evaluation re-aims the
+/// bitmap matrix per frame.
+#[test]
+fn image_meshes_warp_their_picture() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "ImageLayer", "name": "Warp",
+        "image_fileref": {"path": "media/tex.png", "relativeTo": "MOHOProject"},
+        "width": 2.0, "height": 1.0,
+        "mesh": {
+            "points": [
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -1.0, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0, 12], vec![json!({"x": 1.0, "y": 0.5}), json!({"x": 1.5, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 1.0, "y": -0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -1.0, "y": -0.5})])}
+            ],
+            "curves": [{"closed": true, "points": [
+                {"point": 0, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 1, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 2, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 3, "smoothness": channel("Val", vec![0], vec![json!(0.0)])}
+            ]}],
+            "shapes": [{"has_fill": false, "has_outline": false, "edges": {"curve": [0, 0, 0, 0], "segment": [0, 1, 2, 3], "flag": [0, 0, 0, 0]}}]
+        }
+    });
+    let (doc, report) = import_with_media(&root, "media/tex.png", tiny_png());
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let els = &doc.timeline(0).layers[0].keyframes[0].elements;
+    assert_eq!(els.len(), 2, "the quad cage splits into two triangles");
+    // Both pieces are textured triangles whose one animated corner carries its channel.
+    for el in els {
+        let anicraft_doc::ElementKind::Shape(s) = &el.kind else { panic!("a shape") };
+        assert!(s.texture.is_some(), "the image coordinates ride the piece");
+        assert_eq!(s.points.len(), 1, "one animated corner per piece");
+        assert_eq!(s.texture.as_ref().unwrap().uv.len(), 3);
+        assert_eq!(anicraft_doc::path_point_count(&s.path), 3);
+    }
+    // The two pieces share the animated corner's channel, so the seam stays welded.
+    let at = |f: u32| -> Vec<anicraft_geom::Vec2> {
+        els.iter().map(|el| {
+            let anicraft_doc::ElementKind::Shape(s) = &el.kind else { panic!("a shape") };
+            s.points[0].position.sample(f as f32).unwrap()
+        }).collect()
+    };
+    let (a0, b0) = (at(0), at(12));
+    assert!((a0[0] - b0[0]).length() > 0.4, "the corner moves between the frames");
+    // Evaluation: frame 12's paths land where the channels say (stage pixels).
+    let dl = anicraft_doc::evaluate(&doc, 12);
+    assert_eq!(dl.items.len(), 2);
+    // Paths and fill matrices live in shape space (Moho inches, y up); the element
+    // transform carries them to the stage.
+    let inch = [(-1.0_f32, 0.5_f32), (1.5, 0.5), (1.0, -0.5), (-1.0, -0.5)];
+    let uv = [(0.0_f32, 0.0_f32), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)];
+    for it in &dl.items {
+        let PathCmd::MoveTo(p) = it.path.cmds[0] else { panic!("move") };
+        assert!(inch.iter().any(|(x, y)| (p - anicraft_geom::Vec2::new(*x, *y)).length() < 1e-3), "triangle corner at the deformed position: {p:?}");
+        // The fill is a bitmap whose matrix aims the image at the deformed piece.
+        let anicraft_doc::Paint::Bitmap { matrix, bitmap, .. } = it.fill.clone().unwrap() else { panic!("bitmap fill") };
+        assert_eq!(bitmap.0, doc.bitmaps[0].id.0);
+        let mut hit = false;
+        for (u, (x, y)) in uv.iter().zip(inch) {
+            if (matrix.apply(anicraft_geom::Vec2::new(u.0, u.1)) - anicraft_geom::Vec2::new(x, y)).length() < 1e-2 {
+                hit = true;
+            }
+        }
+        assert!(hit, "a pinned uv lands on its deformed corner");
+    }
+}
+
+/// An undeformed image layer keeps the plain picture, sized by the layer's own width/height
+/// (inches) and offset by its PSD translation.
+#[test]
+fn plain_image_layers_draw_their_picture_sized_and_placed() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "ImageLayer", "name": "Photo",
+        "image_fileref": {"path": "media/tex.png", "relativeTo": "MOHOProject"},
+        "width": 1.0, "height": 0.5,
+        "psd_layer_translation": {"x": 0.5, "y": 0.25}
+    });
+    let (doc, report) = import_with_media(&root, "media/tex.png", tiny_png());
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let el = &doc.timeline(0).layers[0].keyframes[0].elements[0];
+    let anicraft_doc::ElementKind::Shape(s) = &el.kind else { panic!("a shape") };
+    let anicraft_doc::Paint::Bitmap { matrix, .. } = s.fill.as_ref().unwrap() else { panic!("bitmap fill") };
+    // The image (2×1 px) fills a 1×0.5-inch box whose centre sits at the PSD translation.
+    // Image y runs down, layer y up: the image's top edge sits at centre.y + h/2.
+    let tl = matrix.apply(anicraft_geom::Vec2::new(0.0, 0.0));
+    let br = matrix.apply(anicraft_geom::Vec2::new(2.0, 1.0));
+    assert!((tl.x - 0.0).abs() < 1e-3 && (tl.y - 0.5).abs() < 1e-3, "top-left at (centre.x-w/2, centre.y+h/2): {tl:?}");
+    assert!((br.x - 1.0).abs() < 1e-3 && (br.y - 0.0).abs() < 1e-3, "{br:?}");
+}
+
+fn tiny_wav() -> Vec<u8> {
+    // A 16-bit mono PCM WAV, 8000 Hz, 8 bytes of silence.
+    let data = [0u8; 8];
+    let mut out = Vec::new();
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    out
+}
+
+
+/// An audio layer becomes a library sound and a Stream sound on its keyframe (ADR 0106,
+/// on the upstream audio model): the timeline shows the sound's length, and the report
+/// stays clean.
+#[test]
+fn audio_layers_become_keyframe_sounds() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "AudioLayer", "name": "Boom",
+        "audio_path": "media/boom.wav"
+    });
+    let (doc, report) = import_with_media(&root, "media/boom.wav", tiny_wav());
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert_eq!(doc.sounds.len(), 1, "the file decoded into the library");
+    let l = &doc.timeline(0).layers[0];
+    assert!(l.has_sounds());
+    let k = &l.keyframes[0];
+    let snd = k.sound.as_ref().unwrap();
+    assert_eq!(snd.sync, anicraft_doc::SoundSync::Stream, "a Moho audio layer plays tied to the timeline");
+    assert_eq!(doc.sound(snd.sound).map(|s| s.frames), Some(4));
+    // The span covers the sound's frames at the project rate (8000 Hz over 24 fps < 1 frame → 1).
+    assert_eq!(k.duration, 1);
+    assert!(k.elements.is_empty(), "audio layers draw nothing");
+}
+
+/// An audio file that can't decode is counted, not silently dropped.
+#[test]
+fn undecodable_audio_files_are_counted() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "AudioLayer", "name": "Mystery",
+        "audio_path": "media/song.aiff"
+    });
+    let (doc, report) = import_with_media(&root, "media/song.aiff", b"FORM????AIFF".to_vec());
+    assert!(doc.sounds.is_empty());
+    assert_eq!(report.skipped.get("audio files that are not WAV, Ogg Vorbis or MP3"), Some(&1), "{:?}", report.skipped);
+}
+
+/// The document soundtrack comes across as a library sound with a note.
+#[test]
+fn the_soundtrack_lands_in_the_library() {
+    let mut root = minimal();
+    root["project_data"]["soundtrack"] = json!("media/boom.wav");
+    let (doc, report) = import_with_media(&root, "media/boom.wav", tiny_wav());
+    assert_eq!(doc.sounds.len(), 1, "the soundtrack decoded into the library");
+    assert!(report.notes.iter().any(|n| n.contains("soundtrack")), "{:?}", report.notes);
+    assert!(!report.skipped.contains_key("document soundtrack"), "{:?}", report.skipped);
+}
+
+/// Physics (ADR 0106): a physics-enabled group's gravity/wind becomes the scene's world,
+/// its body layers carry the body values (converted from inches), and Moho's own baked
+/// `physics_nudge` channel merges into the layer's translation keys.
+#[test]
+fn physics_worlds_bodies_and_baked_nudges_import() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "GroupLayer", "name": "World",
+        "enable_physics": channel("Bool", vec![0], vec![json!(true)]),
+        "gravity": {"x": 0.0, "y": -10.0},
+        "layers": [{
+            "type": "MeshLayer", "name": "Ball",
+            "physics": {"enabled": true, "static": false, "density": 1.0, "friction": 0.3, "restitution": 0.5, "velocity": {"x": 1.0, "y": 0.0}},
+            "transforms": {"translation": channel("Vec3", vec![0], vec![json!({"x": 1.0, "y": 0.0, "z": 0.0})]),
+                           "physics_nudge": channel("Vec2", vec![0, 6], vec![json!({"x": 0.0, "y": 0.0}), json!({"x": 2.0, "y": -1.0})])},
+            "mesh": {"points": [
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -0.5, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 0.5, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 0.5, "y": -0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -0.5, "y": -0.5})])}
+            ], "curves": [{"closed": true, "points": [
+                {"point": 0, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 1, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 2, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 3, "smoothness": channel("Val", vec![0], vec![json!(0.0)])}
+            ]}], "shapes": [{"has_fill": true, "has_outline": false, "edges": {"curve": [0, 0, 0, 0], "segment": [0, 1, 2, 3], "flag": [0, 0, 0, 0]},
+                "style": {"fill_color": channel("Color", vec![0], vec![json!({"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0})])}}]}
+        }]
+    });
+    let (doc, report) = import(&root);
+    let scene = &doc.scenes[0];
+    let world = scene.physics.expect("the group's world became the scene's");
+    // Gravity converts from Moho inches/s² y-up (0, −10) to stage px/s² y-down: (0, +3200).
+    assert!(world.gravity.x.abs() < 1e-3 && (world.gravity.y - 3200.0).abs() < 1e-3, "{:?}", world.gravity);
+    let ball = scene.timeline.layers.iter().find(|l| l.name == "Ball").unwrap();
+    let body = ball.physics.expect("the body layer carries its body");
+    assert!(!body.static_body);
+    assert!((body.friction - 0.3).abs() < 1e-6 && (body.restitution - 0.5).abs() < 1e-6);
+    // The start velocity converted (1 inch/s → +x 320 px/s, y up → y down).
+    assert!((body.velocity.x - 320.0).abs() < 1e-3, "{:?}", body.velocity);
+    // The baked nudge merged into the translation: key 0 = the translation's own (320, 0),
+    // key 6 = translation + nudge (Moho's (2, −1) inches convert y-up→down to (640, +320)).
+    assert_eq!(ball.translation.keys.len(), 2, "{:?}", ball.translation.keys);
+    let k6 = &ball.translation.keys[1];
+    assert_eq!(k6.frame, 6);
+    assert!((k6.val.x - 960.0).abs() < 1e-3 && (k6.val.y - 320.0).abs() < 1e-3, "{:?}", k6.val);
+    // The fixture's Smooth-interp keys re-key linearly, and the report says so.
+    assert_eq!(report.skipped.get("physics nudge easing (the merged keys are linear)"), Some(&1), "{:?}", report.skipped);
+    // And our own bake reproduces the drop under this world: bodies simulate.
+    let baked = anicraft_doc::bake_physics(&doc, 0).unwrap();
+    let y5 = baked.position(ball.id, 5).unwrap().y;
+    assert!(y5 > 0.0, "the ball fell by frame 5: {y5}");
+}
+
+/// Physics off (or no enabled group) leaves no world, and the non-held body options are
+/// counted.
+#[test]
+fn physics_off_or_unheld_options_report() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "GroupLayer", "name": "Plain",
+        "enable_physics": channel("Bool", vec![0], vec![json!(false)]),
+        "layers": [{
+            "type": "MeshLayer", "name": "Thing",
+            "physics": {"enabled": true, "static": true, "density": 2.5, "sleeping": true, "respawn": 3, "enable_motor": true},
+            "mesh": {"points": [], "curves": [], "shapes": []}
+        }]
+    });
+    let (doc, report) = import(&root);
+    assert!(doc.scenes[0].physics.is_none(), "no enabled group → no world");
+    let thing = &doc.scenes[0].timeline.layers[1];
+    let body = thing.physics.expect("the body imports even without a world");
+    assert!(body.static_body);
+    assert!(report.skipped.contains_key("physics density ratios (bodies weigh the same)"), "{:?}", report.skipped);
+    assert!(report.skipped.contains_key("physics motors"), "{:?}", report.skipped);
+    assert!(report.skipped.contains_key("physics body options (sleep, respawn, pivot)"), "{:?}", report.skipped);
 }

@@ -1342,3 +1342,65 @@ mod tests {
         assert!((q[2] - 1.0).abs() < 1e-3, "outside the group unchanged: {q:?}");
     }
 }
+
+    #[test]
+    fn a_warped_image_samples_where_the_pin_says() {
+        // The full pipeline (ADR 0106): a document whose textured triangle deforms by point
+        // channels; render_frame draws the eval-fitted bitmap matrix, so the image's halves
+        // land where the warp puts them, frame after frame.
+        use anicraft_doc::{Bitmap, BitmapId, Document, Element, ElementId, ElementKind, Layer, LayerId, PointTrack, Shape, TextureMap};
+        use std::sync::Arc;
+        use anicraft_geom::Path;
+        let mut png = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut png, 2, 4);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut wr = enc.write_header().unwrap();
+            // Two columns: left red, right blue, four rows.
+            let mut px = Vec::new();
+            for _ in 0..4 {
+                px.extend_from_slice(&[255, 0, 0, 255, 0, 0, 255, 255]);
+            }
+            wr.write_image_data(&px).unwrap();
+        }
+        let mut d = Document::default();
+        d.bitmaps.push(Arc::new(Bitmap::from_png(BitmapId(1), "stripes", png).unwrap()));
+        // A triangle (0,0) (60,0) (60,40), uv over the 2×4 image; its last vertex slides
+        // from (60,40) to (120,40) over ten frames, stretching the triangle to the right.
+        let mut path = Path::new();
+        path.move_to(Vec2::new(0.0, 0.0)).line_to(Vec2::new(60.0, 0.0)).line_to(Vec2::new(60.0, 40.0)).close();
+        let mut ch = anicraft_doc::Channel::default();
+        ch.set_key(0, Vec2::new(60.0, 40.0));
+        ch.set_key(10, Vec2::new(120.0, 40.0));
+        let shape = Shape {
+            path: Arc::new(path),
+            fill: None,
+            stroke: None,
+            fill_rule: FillRule::NonZero,
+            merge: false,
+            bind: Vec::new(),
+            points: vec![PointTrack { index: 2, position: ch }],
+            trim: None,
+            texture: Some(Box::new(TextureMap { bitmap: BitmapId(1), uv: vec![Vec2::new(0.0, 0.0), Vec2::new(2.0, 0.0), Vec2::new(2.0, 4.0)] })),
+        };
+        let mut k = anicraft_doc::Keyframe::new(0, 20);
+        k.elements.push(Arc::new(Element { id: ElementId(1), name: String::new(), transform: Affine::translate(10.0, 10.0), color: Default::default(), kind: ElementKind::Shape(shape) }));
+        let mut layer = Layer::new(LayerId(1), "warp");
+        layer.keyframes = vec![Arc::new(k)];
+        let scene = Arc::make_mut(&mut d.scenes[0]);
+        scene.timeline.layers = vec![Arc::new(layer)];
+        let at = |f: u32| render_frame(&d, f, 1.0).unwrap();
+        let near = |p: Premul, q: [f32; 4]| p.iter().zip(q).all(|(a, b)| (a - b).abs() < 0.02);
+        // At rest the triangle is (0,0)(60,0)(60,40) + (10,10): u = x/30 in shape space, so
+        // the image's left column (u < 1) draws right of the hypotenuse and above u = 1.
+        let pm = at(0);
+        assert!(near(pm.pixel(20, 15).unwrap(), [1.0, 0.0, 0.0, 1.0]), "left column: {:?}", pm.pixel(20, 15));
+        assert!(near(pm.pixel(65, 30).unwrap(), [0.0, 0.0, 1.0, 1.0]), "right column: {:?}", pm.pixel(65, 30));
+        // Frame 10: the last vertex slid to (120,40), shearing the u axis (u = (x−15v)/30):
+        // red survives near the pinned edge, blue reaches the stretched tip.
+        let pm = at(10);
+        assert!(near(pm.pixel(33, 15).unwrap(), [1.0, 0.0, 0.0, 1.0]), "red half near the edge: {:?}", pm.pixel(33, 15));
+        assert!(near(pm.pixel(95, 30).unwrap(), [0.0, 0.0, 1.0, 1.0]), "blue reaches the stretched tip: {:?}", pm.pixel(95, 30));
+        assert!(near(pm.pixel(200, 30).unwrap(), [1.0, 1.0, 1.0, 1.0]), "past the warp the stage shows: {:?}", pm.pixel(200, 30));
+    }

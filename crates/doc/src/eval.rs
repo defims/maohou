@@ -286,9 +286,10 @@ fn interpolate(a: &Element, b: &Element, t: f32, morph: bool, hints: &[(anicraft
                 (Some(x), Some(y)) => Some(x.lerp(y, t)),
                 (x, _) => x.clone(),
             };
-            // The point tracks and trim ride along: their channels sample by frame, so the
-            // tweened shape still animates its points the way the property channels say.
-            ElementKind::Shape(Shape { path, fill, stroke, fill_rule: sa.fill_rule, merge: sa.merge, bind: Vec::new(), points: sa.points.clone(), trim: sa.trim.clone() })
+            // The point tracks, trim and texture pin ride along: their channels sample by
+            // frame, so the tweened shape still animates its points the way the property
+            // channels say.
+            ElementKind::Shape(Shape { path, fill, stroke, fill_rule: sa.fill_rule, merge: sa.merge, bind: Vec::new(), points: sa.points.clone(), trim: sa.trim.clone(), texture: sa.texture.clone() })
         }
         (ElementKind::Symbol { symbol: s1, .. }, ElementKind::Symbol { symbol: s2, .. }) if s1 == s2 => a.kind.clone(),
         // Text tweens its placement and colour effect; the words stay the first keyframe's.
@@ -615,8 +616,19 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
                     // cuts each subpath to its arc (ADR 0105); a trimmed shape draws its
                     // stroke, the fill of a cut-open ring not being a shape any more.
                     let (mut path, mut fill) = (s.path.clone(), s.fill.clone());
-                    if !s.points.is_empty() {
-                        path = crate::points::rebuild(&path, &s.points, frame).map(Arc::new).unwrap_or(path);
+                    if !s.points.is_empty()
+                        && let Some(np) = crate::points::rebuild(&path, &s.points, frame)
+                    {
+                        path = Arc::new(np);
+                    }
+                    // A texture-pinned fill (Moho's image warp; ADR 0106) always comes from
+                    // the pin: the fill matrix refits from the shape's points (deformed or
+                    // not) onto the pinned image coordinates, so the texture follows the
+                    // warp. A degenerate fit leaves the static fill.
+                    if let Some(tex) = &s.texture
+                        && let Some(paint) = crate::texture::paint_for(&path, tex)
+                    {
+                        fill = Some(paint);
                     }
                     if let Some(cut) = s.trim.as_ref().and_then(|t| crate::points::trim(&path, t, frame)) {
                         path = Arc::new(cut);

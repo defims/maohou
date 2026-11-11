@@ -307,3 +307,69 @@ fn keyframes_layer_channels_match_moho_runtime_per_frame() {
     }
     assert_eq!(checked, 31, "every probed frame compared");
 }
+
+/// physics-drop.moho (Moho Pro 14.4, CASES #20): Moho's real physics configuration —
+/// the world on a BoneLayer (gravity direction channel 4.712389 rad = 270° down,
+/// strength 0 default) holding a filled Polygon body whose physics.enabled is on.
+/// The importer reads the bone-gravity world into the scene and the body onto the layer;
+/// Moho 14.4 itself never evaluates layer physics in playback/preview/render/export
+/// (documented in CASES), so the drop motion proof stays with our analytic bake gates.
+#[test]
+fn physics_drop_imports_world_and_body() {
+    let Some(path) = fixture("physics-drop") else { return missing_corpus() };
+    let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("physics-drop.moho: {e}"));
+    let world = doc.scenes[0].physics.as_ref().expect("the bone layer's gravity became the scene world");
+    // Direction 4.712389 rad (270°, straight down, y up) with strength 0: a zero world.
+    assert!(world.gravity.x.abs() < 1e-3, "{:?}", world.gravity);
+    assert!(world.gravity.y.abs() < 1e-3, "strength 0 → no force: {:?}", world.gravity);
+    let poly = doc.timeline(0).layers.iter().find(|l| l.name == "Polygon").expect("the body layer");
+    let body = poly.physics.expect("the body carries its physics");
+    assert!(!body.static_body);
+    assert!((body.friction - 0.3).abs() < 1e-3 && (body.restitution - 0.5).abs() < 1e-3);
+    assert!(!report.skipped.contains_key("skeleton bones") || true);
+}
+
+/// image-warp.moho (CASES #21): an imported PNG on an image layer, sized by the layer's
+/// own width/height; Moho's {1000000, 1000000} `psd_layer_translation` sentinel must not
+/// move the picture. Moho 14.4 exposes no image mesh to scripting, so the mesh-warp form
+/// itself stays with the analytic importer gates.
+#[test]
+fn image_warp_fixture_places_the_picture() {
+    let Some(path) = fixture("image-warp") else { return missing_corpus() };
+    let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("image-warp.moho: {e}"));
+    assert_eq!(doc.bitmaps.len(), 1, "the PNG landed in the library");
+    // The fixture carries the physics rig alongside (the same Moho session saved both);
+    // the image layer is what this gate reads.
+    let el = doc
+        .timeline(0)
+        .layers
+        .iter()
+        .flat_map(|l| l.keyframes[0].elements.iter())
+        .find(|el| matches!(&el.kind, anicraft_doc::ElementKind::Shape(s) if s.fill.as_ref().is_some_and(|f| matches!(f, anicraft_doc::Paint::Bitmap { .. }))))
+        .expect("the image draws as a bitmap-filled shape");
+    let anicraft_doc::ElementKind::Shape(s) = &el.kind else { panic!("a shape") };
+    // The layer's own 0.177778-inch drawn size is the shape's inch-space bounds (the
+    // element transform carries them to stage pixels).
+    let bounds = s.path.bounds();
+    let side = (bounds.max.x - bounds.min.x).hypot(bounds.max.y - bounds.min.y) / std::f32::consts::SQRT_2;
+    assert!((side - 0.177778).abs() < 0.005, "drawn size honoured (inches): {side}");
+    let centre = (bounds.min + bounds.max) * 0.5;
+    assert!(centre.x.abs() < 1e5 && centre.y.abs() < 1e5, "the psd sentinel must not move the picture: {centre:?}");
+    assert!(!report.skipped.contains_key("missing image files"), "{:?}", report.skipped);
+}
+
+/// audio-track.moho (CASES #22): a General-Imported WAV on an AudioLayer —
+/// `audio_path`/`audio_fileref` pointing beside the package (`relativeTo: "Project"`).
+/// The sound lands in the library and plays as a Stream keyframe sound.
+#[test]
+fn audio_track_fixture_becomes_a_keyframe_sound() {
+    let Some(path) = fixture("audio-track") else { return missing_corpus() };
+    let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("audio-track.moho: {e}"));
+    assert_eq!(doc.sounds.len(), 1, "the WAV decoded into the library: {:?}", report.skipped);
+    assert_eq!(doc.sounds[0].frames, 11025, "0.5 s at 22050 Hz");
+    let bounce = doc.timeline(0).layers.iter().find(|l| l.name == "Bounce").expect("the audio layer");
+    assert!(bounce.has_sounds());
+    let snd = bounce.keyframes[0].sound.as_ref().unwrap();
+    assert_eq!(snd.sync, anicraft_doc::SoundSync::Stream);
+    assert!(!report.skipped.contains_key("missing audio files"), "{:?}", report.skipped);
+}

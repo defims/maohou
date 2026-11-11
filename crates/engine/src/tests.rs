@@ -524,13 +524,84 @@ fn moho_imports_round_trip_through_the_native_format() {
         eprintln!("skipped: no maop-corpus at MAOHOU_FIXTURES or ../../maop-corpus");
         return;
     }
-    for name in ["empty", "keyframes", "text", "switch"] {
+    for name in ["empty", "keyframes", "text", "switch", "physics-drop", "image-warp", "audio-track"] {
         let path = dir.join(format!("{name}.moho"));
         let (doc, _) = anicraft_mohoproj_import::import_path(&path).unwrap_or_else(|e| panic!("{name}.moho: {e}"));
         let back = format::from_json(&format::to_json(&doc).unwrap()).unwrap_or_else(|e| panic!("{name}.moho round trip: {e}"));
         assert_eq!(doc, back, "{name}.moho through save/load");
         assert!(back.maop_maohou.is_some(), "{name}: the sidecar survives");
     }
+}
+
+/// The stage-6 model round-trips whole (ADR 0106): a texture-pinned shape, a physics body
+/// and world, and a keyframe sound come back structurally equal through save/load.
+#[test]
+fn media_and_simulation_round_trip_through_the_native_format() {
+    use anicraft_doc::{Bitmap, BitmapId, Element, ElementId, ElementKind, FrameSound, PhysicsBody, PhysicsWorld, PointTrack, Shape, Sound, SoundId, SoundSync, TextureMap};
+    let mut png = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png, 2, 1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().unwrap();
+        wr.write_image_data(&[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    }
+    let mut d = sample::demo();
+    let bmp_id = d.alloc_id();
+    d.bitmaps.push(Arc::new(Bitmap::from_png(BitmapId(bmp_id), "tex", png).unwrap()));
+    let mut ch = anicraft_doc::Channel::default();
+    ch.set_key(0, Vec2::new(100.0, 0.0));
+    ch.set_key(10, Vec2::new(120.0, 10.0));
+    let tri = Shape {
+        path: Arc::new({
+            let mut p = anicraft_geom::Path::new();
+            p.move_to(Vec2::new(0.0, 0.0)).line_to(Vec2::new(100.0, 0.0)).line_to(Vec2::new(100.0, 50.0)).close();
+            p
+        }),
+        fill: None,
+        stroke: None,
+        fill_rule: anicraft_geom::FillRule::NonZero,
+        merge: false,
+        bind: Vec::new(),
+        points: vec![PointTrack { index: 1, position: ch }],
+        trim: None,
+        texture: Some(Box::new(TextureMap { bitmap: BitmapId(bmp_id), uv: vec![Vec2::new(0.0, 0.0), Vec2::new(2.0, 0.0), Vec2::new(2.0, 1.0)] })),
+    };
+    let tri_id = d.alloc_id();
+    let sound_id = d.alloc_id();
+    {
+        let tl = d.timeline_mut(0);
+        let last = Arc::make_mut(tl.layers.last_mut().unwrap());
+        Arc::make_mut(&mut last.keyframes[0]).elements.push(Arc::new(Element { id: ElementId(tri_id), name: String::new(), transform: anicraft_geom::Affine::IDENTITY, color: Default::default(), kind: ElementKind::Shape(tri) }));
+        let first = Arc::make_mut(&mut tl.layers[0]);
+        first.physics = Some(PhysicsBody { static_body: false, friction: 0.2, restitution: 0.7, velocity: Vec2::new(5.0, 0.0) });
+        Arc::make_mut(&mut first.keyframes[0]).sound = Some(FrameSound { sound: SoundId(sound_id), sync: SoundSync::Stream, repeat: 1, looping: false, effect: Default::default() });
+    }
+    Arc::make_mut(&mut d.scenes[0]).physics = Some(PhysicsWorld { gravity: Vec2::new(0.0, 3200.0), wind: Vec2::new(10.0, 0.0) });
+    d.sounds.push(Arc::new(Sound::from_data(SoundId(sound_id), "boom", tiny_wav_bytes()).unwrap()));
+    let back = format::from_json(&format::to_json(&d).unwrap()).unwrap();
+    assert_eq!(d, back, "texture pin, physics and sound survive save/load whole");
+    assert_eq!(back.sounds[0].frames, 4);
+}
+
+/// A tiny silent WAV (16-bit mono PCM, 8000 Hz, four samples).
+fn tiny_wav_bytes() -> Vec<u8> {
+    let data = [0u8; 8];
+    let mut out = Vec::new();
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    out
 }
 
 /// Adversarial params for every command: must return Ok or Err, never panic.
