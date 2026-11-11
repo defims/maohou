@@ -584,3 +584,81 @@ fn the_soundtrack_lands_in_the_library() {
     assert!(report.notes.iter().any(|n| n.contains("soundtrack")), "{:?}", report.notes);
     assert!(!report.skipped.contains_key("document soundtrack"), "{:?}", report.skipped);
 }
+
+/// Physics (ADR 0106): a physics-enabled group's gravity/wind becomes the scene's world,
+/// its body layers carry the body values (converted from inches), and Moho's own baked
+/// `physics_nudge` channel merges into the layer's translation keys.
+#[test]
+fn physics_worlds_bodies_and_baked_nudges_import() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "GroupLayer", "name": "World",
+        "enable_physics": channel("Bool", vec![0], vec![json!(true)]),
+        "gravity": {"x": 0.0, "y": -10.0},
+        "layers": [{
+            "type": "MeshLayer", "name": "Ball",
+            "physics": {"enabled": true, "static": false, "density": 1.0, "friction": 0.3, "restitution": 0.5, "velocity": {"x": 1.0, "y": 0.0}},
+            "transforms": {"translation": channel("Vec3", vec![0], vec![json!({"x": 1.0, "y": 0.0, "z": 0.0})]),
+                           "physics_nudge": channel("Vec2", vec![0, 6], vec![json!({"x": 0.0, "y": 0.0}), json!({"x": 2.0, "y": -1.0})])},
+            "mesh": {"points": [
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -0.5, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 0.5, "y": 0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": 0.5, "y": -0.5})])},
+                {"position": channel("Vec2", vec![0], vec![json!({"x": -0.5, "y": -0.5})])}
+            ], "curves": [{"closed": true, "points": [
+                {"point": 0, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 1, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 2, "smoothness": channel("Val", vec![0], vec![json!(0.0)])},
+                {"point": 3, "smoothness": channel("Val", vec![0], vec![json!(0.0)])}
+            ]}], "shapes": [{"has_fill": true, "has_outline": false, "edges": {"curve": [0, 0, 0, 0], "segment": [0, 1, 2, 3], "flag": [0, 0, 0, 0]},
+                "style": {"fill_color": channel("Color", vec![0], vec![json!({"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0})])}}]}
+        }]
+    });
+    let (doc, report) = import(&root);
+    let scene = &doc.scenes[0];
+    let world = scene.physics.expect("the group's world became the scene's");
+    // Gravity converts from Moho inches/s² y-up (0, −10) to stage px/s² y-down: (0, +3200).
+    assert!(world.gravity.x.abs() < 1e-3 && (world.gravity.y - 3200.0).abs() < 1e-3, "{:?}", world.gravity);
+    let ball = scene.timeline.layers.iter().find(|l| l.name == "Ball").unwrap();
+    let body = ball.physics.expect("the body layer carries its body");
+    assert!(!body.static_body);
+    assert!((body.friction - 0.3).abs() < 1e-6 && (body.restitution - 0.5).abs() < 1e-6);
+    // The start velocity converted (1 inch/s → +x 320 px/s, y up → y down).
+    assert!((body.velocity.x - 320.0).abs() < 1e-3, "{:?}", body.velocity);
+    // The baked nudge merged into the translation: key 0 = the translation's own (320, 0),
+    // key 6 = translation + nudge (Moho's (2, −1) inches convert y-up→down to (640, +320)).
+    assert_eq!(ball.translation.keys.len(), 2, "{:?}", ball.translation.keys);
+    let k6 = &ball.translation.keys[1];
+    assert_eq!(k6.frame, 6);
+    assert!((k6.val.x - 960.0).abs() < 1e-3 && (k6.val.y - 320.0).abs() < 1e-3, "{:?}", k6.val);
+    // The fixture's Smooth-interp keys re-key linearly, and the report says so.
+    assert_eq!(report.skipped.get("physics nudge easing (the merged keys are linear)"), Some(&1), "{:?}", report.skipped);
+    // And our own bake reproduces the drop under this world: bodies simulate.
+    let baked = anicraft_doc::bake_physics(&doc, 0).unwrap();
+    let y5 = baked.position(ball.id, 5).unwrap().y;
+    assert!(y5 > 0.0, "the ball fell by frame 5: {y5}");
+}
+
+/// Physics off (or no enabled group) leaves no world, and the non-held body options are
+/// counted.
+#[test]
+fn physics_off_or_unheld_options_report() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "GroupLayer", "name": "Plain",
+        "enable_physics": channel("Bool", vec![0], vec![json!(false)]),
+        "layers": [{
+            "type": "MeshLayer", "name": "Thing",
+            "physics": {"enabled": true, "static": true, "density": 2.5, "sleeping": true, "respawn": 3, "enable_motor": true},
+            "mesh": {"points": [], "curves": [], "shapes": []}
+        }]
+    });
+    let (doc, report) = import(&root);
+    assert!(doc.scenes[0].physics.is_none(), "no enabled group → no world");
+    let thing = &doc.scenes[0].timeline.layers[1];
+    let body = thing.physics.expect("the body imports even without a world");
+    assert!(body.static_body);
+    assert!(report.skipped.contains_key("physics density ratios (bodies weigh the same)"), "{:?}", report.skipped);
+    assert!(report.skipped.contains_key("physics motors"), "{:?}", report.skipped);
+    assert!(report.skipped.contains_key("physics body options (sleep, respawn, pivot)"), "{:?}", report.skipped);
+}

@@ -79,6 +79,11 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
     // carries them in Moho.
     l.opacity = layer_opacity(b, layer);
     l.filters = layer_filters(b, layer);
+    // The layer as a physics body (ADR 0106): Moho's `physics.enabled` decides; the keys
+    // the model doesn't hold are counted and ride the sidecar. A physics-enabled group
+    // also collects the scene's world.
+    collect_world(b, layer);
+    l.physics = read_physics_body(b, layer);
     // The layer's transform: animated channels on a leaf layer (stage 2), channels on a
     // container (stage 3's group semantics), or the static bake into the drawn elements.
     let channels = anim::layer_transform_channels(get(layer, "transforms").unwrap_or(&Value::Null), &mut b.report);
@@ -264,6 +269,67 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     }
 }
 
+/// The layer's physics body (Moho's `physics.*`; ADR 0106): enabled layers carry the
+/// editable core — static, friction, restitution, velocity (inches/s, converted). Density
+/// ratios, respawning, sleeping, pivots, motors and force fields have no slot in the first
+/// slice and are counted when they carry values; the group's world (its `enable_physics`,
+/// `gravity`, `wind`) collects on the builder.
+fn read_physics_body(b: &mut Builder, layer: &Value) -> Option<anicraft_doc::PhysicsBody> {
+    let Some(ph) = get(layer, "physics") else { return None };
+    let frame = b.frame;
+    let on = json::boolean(get(ph, "enabled")).unwrap_or(false);
+    if !on {
+        return None;
+    }
+    let ch = |k: &str| get(ph, k).and_then(Channel::parse);
+    if ch("motor_speed").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "enable_motor")).unwrap_or(false) {
+        b.report.skip("physics motors");
+    }
+    if ch("force_field_vector").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "force_field")).unwrap_or(false) {
+        b.report.skip("physics force fields");
+    }
+    if json::boolean(get(ph, "sleeping")).unwrap_or(false) || json::integer(get(ph, "respawn")).is_some_and(|r| r != 0) || json::boolean(get(ph, "pivot")).unwrap_or(false) {
+        b.report.skip("physics body options (sleep, respawn, pivot)");
+    }
+    // Moho stores density/friction/restitution as plain numbers (fresh-minimal evidence);
+    // a channelled form reads too.
+    let num = |k: &str, d: f64| json::num(get(ph, k)).or_else(|| ch(k).and_then(|c| channel::sample_f64(&c, frame))).unwrap_or(d);
+    if (num("density", 1.0) - 1.0).abs() > 1e-6 {
+        b.report.skip("physics density ratios (bodies weigh the same)");
+    }
+    let velocity = get(ph, "velocity").and_then(|v| json::vec2(Some(v))).unwrap_or(anicraft_geom::Vec2::ZERO);
+    Some(anicraft_doc::PhysicsBody {
+        static_body: json::boolean(get(ph, "static")).unwrap_or(false),
+        friction: num("friction", 0.3).clamp(0.0, 1.0) as f32,
+        restitution: num("restitution", 0.5).clamp(0.0, 1.0) as f32,
+        velocity: anicraft_geom::Vec2::new((velocity.x * b.dpi) as f32, (-velocity.y * b.dpi) as f32),
+    })
+}
+
+/// The enclosing physics-enabled group's world (Moho's GroupLayer `enable_physics` with its
+/// `gravity`/`wind`, inches/s² y-up): the first one becomes the scene's world, later ones
+/// are counted. Gravity's default in the corpus is (0, −10) — down, stage pixels +y.
+fn collect_world(b: &mut Builder, layer: &Value) {
+    if json::string(get(layer, "type")).as_deref() != Some("GroupLayer") {
+        return;
+    }
+    let frame = b.frame;
+    let on = get(layer, "enable_physics").and_then(Channel::parse).is_some_and(|c| channel::sample_bool(&c, frame).unwrap_or(false));
+    if !on {
+        return;
+    }
+    let conv = |v: Option<anicraft_geom::Vec2>| -> Option<anicraft_geom::Vec2> {
+        v.map(|g| anicraft_geom::Vec2::new((g.x * b.dpi) as f32, (-g.y * b.dpi) as f32))
+    };
+    let gravity = conv(get(layer, "gravity").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::new(0.0, 10.0 * b.dpi));
+    let wind = conv(get(layer, "wind").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::ZERO);
+    let world = anicraft_doc::PhysicsWorld { gravity, wind }.sanitized();
+    match &b.world {
+        Some(_) => b.report.skip("physics worlds past the first (the first one simulates)"),
+        None => b.world = Some(world),
+    }
+}
+
 /// The layer's opacity channel: Moho's `layer_effects.alpha` (0..=1), key for key. A single
 /// key at the default is no channel at all.
 fn layer_opacity(b: &mut Builder, layer: &Value) -> anicraft_doc::Channel<f32> {
@@ -375,9 +441,6 @@ fn layer_transform(b: &mut Builder, layer: &Value) -> Affine {
     let (shx, shy, _) = ch("shear").and_then(|c| channel::sample_vec3(&c, frame)).unwrap_or((0.0, 0.0, 0.0));
     if ch("following").is_some_and(|c| c.is_animated()) {
         b.report.skip("follow progress animation");
-    }
-    if ch("physics_nudge").is_some_and(|c| c.is_animated()) {
-        b.report.skip("physics nudge animation (drawn without it)");
     }
     let origin = get(layer, "origin").and_then(|v| json::vec2(Some(v))).unwrap_or(anicraft_geom::Vec2::ZERO);
     let shear = Affine { m: [1.0, shy, shx, 1.0, 0.0, 0.0] };

@@ -10,6 +10,7 @@ mod cmds_bone;
 pub mod cmds_brush;
 mod cmds_camera;
 mod cmds_rig;
+mod cmds_physics;
 mod cmds_switch;
 mod cmds_draw;
 pub mod cmds_erase;
@@ -116,6 +117,7 @@ pub fn commands() -> Vec<CommandSpec> {
     v.extend(cmds_bone::specs());
     v.extend(cmds_rig::specs());
     v.extend(cmds_switch::specs());
+    v.extend(cmds_physics::specs());
     v.extend(cmds_camera::specs());
     v.extend(cmds_motion::specs());
     v.extend(cmds_hints::specs());
@@ -945,6 +947,7 @@ mod tests_bone;
 #[cfg(test)]
 mod tests_rig;
 #[cfg(test)]
+mod tests_physics;
 mod tests_switch;
 #[cfg(test)]
 mod tests_camera;

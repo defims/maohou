@@ -82,6 +82,9 @@ pub(crate) struct Builder<'a> {
     pub duration: u32,
     /// The project's playback range `(start, end)`, 0-based with `end` exclusive.
     pub frames: (u32, u32),
+    /// The physics-enabled group's world (ADR 0106), collected during the layer walk and
+    /// put on the scene when the walk found one.
+    pub world: Option<anicraft_doc::PhysicsWorld>,
 }
 
 impl<'a> Builder<'a> {
@@ -168,7 +171,7 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
     let from_px = to_px.inverse().unwrap_or(Affine::IDENTITY);
 
     let frames = ((start as u64 - 1).clamp(0, MAX_FRAME as u64) as u32, (end as u64).clamp(1, MAX_FRAME as u64) as u32);
-    let mut b = Builder { doc, report: Report::default(), fonts, faces: HashMap::new(), read, to_px, from_px, dpi, frame: start, duration, frames };
+    let mut b = Builder { doc, report: Report::default(), fonts, faces: HashMap::new(), read, to_px, from_px, dpi, frame: start, duration, frames, world: None };
 
     // Render/document settings without a slot, counted when non-default.
     document_settings(&mut b.report, pd);
@@ -205,6 +208,8 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
     if (range_start, range_end) != (0, content) && range_start < range_end {
         scene.frames = Some((range_start, range_end));
     }
+    // The physics world the layer walk collected (Moho's physics-enabled group; ADR 0106).
+    scene.physics = b.world.take();
     b.doc.scenes.push(Arc::new(scene));
 
     // The sidecar: the untouched original, the `.maop` dialect's `maop_maohou` node, so a

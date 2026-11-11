@@ -271,7 +271,52 @@ pub(crate) fn layer_transform_channels(tr: &Value, report: &mut Report) -> Layer
             break;
         }
     }
+    merge_nudge(&mut translation, tr, report, dpi);
     LayerTransform { translation, scale, rotation, shear, flip_h, flip_v }
+}
+
+/// Moho's `physics_nudge` (ADR 0106): the offset its baked physics gives the layer per
+/// frame (`use_baked_physics` — Moho's own offline bake, exactly what our bake writes).
+/// It merges into the translation, key for key: a channel without translation keys becomes
+/// the translation; both animating sums at the union of key frames, re-keyed linearly (the
+/// report says so — Moho's per-key easing on the two parts can't survive a sum as keys).
+fn merge_nudge(translation: &mut anicraft_doc::Channel<Vec2>, tr: &Value, report: &mut Report, dpi: f64) {
+    let Some(nc) = get(tr, "physics_nudge").and_then(Channel::parse) else { return };
+    if !nc.is_animated() {
+        return;
+    }
+    let mut nudge = anicraft_doc::Channel::default();
+    read_channel(&mut nudge, tr, "physics_nudge", report, 2, |ch, i| {
+        let v = channel::sample_vec2_at(ch, i).unwrap_or(Vec2::ZERO);
+        Vec2::new((dpi * v.x as f64) as f32, (-dpi * v.y as f64) as f32)
+    });
+    if nudge.keys.is_empty() {
+        return;
+    }
+    let neutral = nudge.keys.len() == 1 && nudge.keys[0].val.length() < 1e-6 && nudge.keys[0].frame == 0;
+    if neutral {
+        return;
+    }
+    let eased = nudge.keys.iter().any(|k| !matches!(k.out, Interp::Linear | Interp::Hold))
+        || translation.keys.iter().any(|k| !matches!(k.out, Interp::Linear | Interp::Hold));
+    let mut frames: Vec<u32> = nudge.keys.iter().map(|k| k.frame).collect();
+    frames.extend(translation.keys.iter().map(|k| k.frame));
+    frames.sort_unstable();
+    frames.dedup();
+    let mut merged = anicraft_doc::Channel::default();
+    for f in frames {
+        let at = f as f32;
+        let t = translation.sample_or(at, Vec2::ZERO);
+        let n = nudge.sample_or(at, Vec2::ZERO);
+        merged.set_key(f, t + n);
+        if let Some(k) = merged.keys.last_mut() {
+            k.out = Interp::Linear;
+        }
+    }
+    if eased {
+        report.skip("physics nudge easing (the merged keys are linear)");
+    }
+    *translation = merged;
 }
 
 #[cfg(test)]
