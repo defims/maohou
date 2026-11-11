@@ -122,9 +122,20 @@ pub(crate) fn read_channel<'a, T: ChannelValue>(
     name: &str,
     report: &mut Report,
     components: usize,
+    value: impl FnMut(&Channel, usize) -> T,
+) -> Option<Channel<'a>> {
+    read_channel_value(out, get(tr, name)?, report, components, value)
+}
+
+/// [`read_channel`] for a channel object in hand (a bone channel, or a smart-bone action's
+/// pose): same conversion, no field lookup.
+pub(crate) fn read_channel_value<'a, T: ChannelValue>(
+    out: &mut anicraft_doc::Channel<T>,
+    v: &'a Value,
+    report: &mut Report,
+    components: usize,
     mut value: impl FnMut(&Channel, usize) -> T,
 ) -> Option<Channel<'a>> {
-    let v = get(tr, name)?;
     let ch = Channel::parse(v)?;
     if json::boolean(get(v, "mute")).unwrap_or(false) && ch.is_animated() {
         report.skip("muted channels (held at their first key)");

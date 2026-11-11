@@ -28,6 +28,7 @@ pub enum Tool {
     PaintBucket,
     InkBottle,
     Eyedropper,
+    Bone,
     Camera,
     Hand,
     Zoom,
@@ -65,7 +66,7 @@ impl GapSize {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 19] = [Tool::Select, Tool::Subselect, Tool::Transform, Tool::Width, Tool::Pen, Tool::Text, Tool::Pencil, Tool::Brush, Tool::Eraser, Tool::Rect, Tool::Oval, Tool::Star, Tool::Line, Tool::PaintBucket, Tool::InkBottle, Tool::Eyedropper, Tool::Camera, Tool::Hand, Tool::Zoom];
+    pub const ALL: [Tool; 20] = [Tool::Select, Tool::Subselect, Tool::Transform, Tool::Width, Tool::Pen, Tool::Text, Tool::Pencil, Tool::Brush, Tool::Eraser, Tool::Rect, Tool::Oval, Tool::Star, Tool::Line, Tool::PaintBucket, Tool::InkBottle, Tool::Eyedropper, Tool::Bone, Tool::Camera, Tool::Hand, Tool::Zoom];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -85,6 +86,7 @@ impl Tool {
             Tool::PaintBucket => "Paint Bucket",
             Tool::InkBottle => "Ink Bottle",
             Tool::Eyedropper => "Eyedropper",
+            Tool::Bone => "Bones",
             Tool::Camera => "Camera",
             Tool::Hand => "Hand",
             Tool::Zoom => "Zoom",
@@ -109,6 +111,7 @@ impl Tool {
             Tool::PaintBucket => Some("K"),
             Tool::InkBottle => Some("S"),
             Tool::Eyedropper => Some("I"),
+            Tool::Bone => None,
             Tool::Camera => Some("C"),
             Tool::Hand => Some("H"),
             Tool::Zoom => Some("Z"),
@@ -132,6 +135,7 @@ impl Tool {
             Tool::PaintBucket => "Click inside an outline to fill it (on the layer's lines), or on a fill to recolour it. The gap size closes small openings.",
             Tool::InkBottle => "Click a shape to give it the current stroke colour and width.",
             Tool::Eyedropper => "Click a fill to pick its colour, gradient or bitmap (then pour it with the Paint Bucket), or a line to pick its colour, width and profile (then apply it with the Ink Bottle). With shapes selected, the picked style goes onto them. Shift-click picks into the other swatch only.",
+            Tool::Bone => "Shows the bones of the rig the active layer belongs to. Drag an IK tip (a ringed bone end) and the chain follows: the pose keys at the playhead, one drag is one undo step. The tool draws bones, not artwork.",
             Tool::Camera => "Drag on the stage to pan the camera, drag the round handle to turn it, and use the wheel to zoom (each drag is one undo step). Picking the tool adds a camera if the scene has none.",
             Tool::Hand => "Drag to pan the stage. Space works with any tool.",
             Tool::Zoom => "Click to zoom in, Alt-click to zoom out. Ctrl+wheel zooms anywhere.",
@@ -197,6 +201,8 @@ pub enum Drag {
     /// Editing the motion path (ADR 0030) from stage point `start`; the path as it was when the
     /// drag began is `App::motion_drag`.
     MotionPath { grab: crate::motion_path::Grab, start: egui::Pos2 },
+    /// Bones tool: dragging an IK tip; `bone` is the dragged bone whose target moves.
+    BoneIk { bone: usize },
     /// Moving the whole motion path (ADR 0038), from stage point `last` last frame.
     MotionMove { last: egui::Pos2 },
     /// Camera tool (ADR 0027): panning from screen point `last`, turning from pointer angle

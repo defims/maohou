@@ -372,7 +372,7 @@ fn frame_target(app: &mut App, ui: &mut egui::Ui, doc: &Document) -> Option<Fram
                 ui.label(text(Type::Data, format!("{}", frame + 1)));
                 ui.label(text(Type::Body, layer.name.as_str()).color(T.text_dim));
             });
-            if layer.kind == LayerKind::Folder || (layer.kind == LayerKind::Guide && !layer.keyframe_at(frame).is_some_and(is_kept)) {
+            if layer.kind.is_container() || (layer.kind == LayerKind::Guide && !layer.keyframe_at(frame).is_some_and(is_kept)) {
                 ui.label(text(Type::Caption, "Folders and guide layers don't run actions. Pick another layer in the timeline."));
                 return None;
             }
@@ -392,7 +392,7 @@ fn frame_target(app: &mut App, ui: &mut egui::Ui, doc: &Document) -> Option<Fram
             let sym = doc.symbol(sid)?;
             let clip = sym.kind == SymbolKind::MovieClip;
             // A movie clip's layers that run; on other symbols, the layers that keep a script.
-            let offered = |l: &anicraft_engine::doc::Layer| if clip { !matches!(l.kind, LayerKind::Folder | LayerKind::Guide) } else { l.keyframes.iter().any(|k| is_kept(k)) };
+            let offered = |l: &anicraft_engine::doc::Layer| if clip { !matches!(l.kind, LayerKind::Folder | LayerKind::Bone | LayerKind::Guide) } else { l.keyframes.iter().any(|k| is_kept(k)) };
             let layers: Vec<(LayerId, String)> = sym.timeline.layers.iter().filter(|l| offered(l)).map(|l| (l.id, l.name.clone())).collect();
             let lid = app.actions.layer.filter(|l| layers.iter().any(|(x, _)| x == l)).or_else(|| layers.first().map(|(l, _)| *l))?;
             app.actions.layer = Some(lid);

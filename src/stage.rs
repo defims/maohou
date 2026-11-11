@@ -301,7 +301,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             _ if mp_hot.is_some() => CursorIcon::Grab,
             _ if pen_hot.is_some() => CursorIcon::Copy,
             Tool::Width => crate::widthtool::cursor(app, pointer, xf),
+            Tool::Bone => crate::bonetool::cursor(app, pointer, to_screen).unwrap_or(CursorIcon::Default),
             Tool::Transform => {
+
                 let zone = match app.drag {
                     Drag::Transform { kind, .. } => Some(kind),
                     _ => sel_rect.zip(pointer).and_then(|(r, p)| xf_zone(r, p)),
@@ -397,6 +399,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 // With the Faucet on, the eraser deletes on a click instead.
                 Tool::Eraser if !app.eraser.faucet => crate::erasertool::start(app, to_v(sp)),
                 Tool::Pen | Tool::Text | Tool::PaintBucket | Tool::InkBottle | Tool::Eyedropper | Tool::Eraser => Drag::None,
+                Tool::Bone => crate::bonetool::drag_start(app, sp, to_screen).unwrap_or(Drag::None),
                 Tool::Rect | Tool::Oval | Tool::Star | Tool::Line => Drag::Shape { start: sp, cur: sp },
                 Tool::Camera => crate::camera_tool::drag_start(app, &cam_geo, press),
                 Tool::Hand => Drag::Pan,
@@ -464,6 +467,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 let d = *d;
                 crate::widthtool::drag_to(app, d, to_v(c), alt, zoom);
             }
+            (Drag::BoneIk { bone }, Some(c)) => {
+                let bone = *bone;
+                crate::bonetool::drag_to(app, bone, c);
+            }
             (Drag::Pencil, Some(c)) => crate::pathtools::pencil_sample(app, to_v(c), xf),
             (Drag::Brush, Some(c)) => crate::brushtool::sample(app, to_v(c), pressure, xf),
             (Drag::Eraser, Some(c)) => crate::brushtool::sample(app, to_v(c), None, xf),
@@ -481,6 +488,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             Drag::Transform { .. } | Drag::Points { .. } | Drag::Hint { .. } | Drag::MotionMove { .. } | Drag::CameraPan { .. } | Drag::CameraRotate { .. } => app.s.end_gesture(),
             Drag::Width { .. } => crate::widthtool::drag_end(app),
+            Drag::BoneIk { .. } => crate::bonetool::drag_end(app),
             Drag::MotionPath { .. } => crate::motion_path::drag_end(app),
             Drag::PointMarquee { start, cur } => crate::pathtools::marquee_points(app, start, cur, shift),
             Drag::Pencil => crate::pathtools::commit_pencil(app, xf),
@@ -881,6 +889,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     crate::pathtools::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p)));
     crate::widthtool::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p)));
+    crate::bonetool::draw_overlay(app, &painter, to_screen, pointer.filter(|p| canvas.contains(*p) && !panning && !paused));
     crate::brushtool::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p) && !panning && !paused));
     crate::erasertool::draw_overlay(app, &painter, xf, pointer.filter(|p| canvas.contains(*p) && !panning && !paused));
     // After this frame's edits, so a drag on the path shows where it is now.

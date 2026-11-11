@@ -17,7 +17,7 @@ pub const FORMAT_NAME: &str = "anicraft";
 /// rotation, shear, flips, origin pivot, camera_immune) and each scene's camera, timeline
 /// markers and playback frame range. All optional keys: older files read as before, with no
 /// layer transform and the plain unmoving camera.
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 /// Largest file we will parse.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 /// Files smaller than this (compact) are pretty-printed for humans and diffs.

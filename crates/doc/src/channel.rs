@@ -144,10 +144,21 @@ impl ChannelValue for bool {
 }
 
 /// One animatable value: its keys, sorted by frame, one per frame.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Channel<T> {
     #[serde(default)]
     pub keys: Vec<Key<T>>,
+    /// Smart-bone actions riding on this channel (ADR 0104): named alternate timelines
+    /// for the same property, blended in by the driving bone's value. Empty on every
+    /// ordinary channel — layer transforms, the camera and opacity never carry any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<crate::rig::Action<T>>,
+}
+
+impl<T> Default for Channel<T> {
+    fn default() -> Self {
+        Channel { keys: Vec::new(), actions: Vec::new() }
+    }
 }
 
 impl<T> Channel<T> {
@@ -156,7 +167,7 @@ impl<T> Channel<T> {
     }
     /// The channel as it looks when nothing animates it: one key holding `val`.
     pub fn constant(frame: u32, val: T) -> Channel<T> {
-        Channel { keys: vec![Key::new(frame, val)] }
+        Channel { keys: vec![Key::new(frame, val)], actions: Vec::new() }
     }
     /// Index of the key at exactly `frame`.
     pub fn key_at(&self, frame: u32) -> Option<usize> {
@@ -330,7 +341,7 @@ mod tests {
     const EPS: f32 = 1e-6;
 
     fn ch(keys: Vec<(u32, f32)>) -> Channel<f32> {
-        Channel { keys: keys.into_iter().map(|(f, v)| Key::new(f, v)).collect() }
+        Channel { keys: keys.into_iter().map(|(f, v)| Key::new(f, v)).collect(), actions: Vec::new() }
     }
 
     #[test]
@@ -430,6 +441,7 @@ mod tests {
                 Key::new(0, Vec2::new(0.0, 0.0)),
                 Key::new(10, Vec2::new(10.0, 100.0)),
             ],
+            actions: Vec::new(),
         };
         c.keys[0].out = Interp::Hold;
         assert_eq!(c.sample(5.0), Some(Vec2::new(0.0, 0.0)), "Hold steps the whole value");
@@ -441,7 +453,7 @@ mod tests {
 
     #[test]
     fn bools_step() {
-        let mut c = Channel { keys: vec![Key::new(0, false), Key::new(10, true)] };
+        let mut c = Channel { keys: vec![Key::new(0, false), Key::new(10, true)], actions: Vec::new() };
         c.keys[0].out = Interp::Smooth;
         assert!(!c.sample(9.0).unwrap());
         assert!(c.sample(10.0).unwrap());

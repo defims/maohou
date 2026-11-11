@@ -4,7 +4,7 @@ use crate::camera::Camera;
 use crate::player::PlayerState;
 use crate::{ColorEffect, Document, Element, ElementId, ElementKind, Layer, LayerId, LayerKind, MAX_LAYER_DEPTH, Paint, Rgba, Shape, Stroke, SymbolId, SymbolKind, Timeline, TweenKind};
 use anicraft_geom::walk::PathWalk;
-use anicraft_geom::{Affine, FillRule, Path};
+use anicraft_geom::{Affine, FillRule, Path, PathCmd};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -252,7 +252,7 @@ fn interpolate(a: &Element, b: &Element, t: f32, morph: bool, hints: &[(anicraft
                 (Some(x), Some(y)) => Some(x.lerp(y, t)),
                 (x, _) => x.clone(),
             };
-            ElementKind::Shape(Shape { path, fill, stroke, fill_rule: sa.fill_rule, merge: sa.merge })
+            ElementKind::Shape(Shape { path, fill, stroke, fill_rule: sa.fill_rule, merge: sa.merge, bind: Vec::new() })
         }
         (ElementKind::Symbol { symbol: s1, .. }, ElementKind::Symbol { symbol: s2, .. }) if s1 == s2 => a.kind.clone(),
         // Text tweens its placement and colour effect; the words stay the first keyframe's.
@@ -331,9 +331,55 @@ pub fn instance_start(layer: &Layer, frame: u32, id: ElementId, symbol: SymbolId
     start
 }
 
+/// The skin matrices of the nearest enclosing bone layer (ADR 0104): its skeleton's pose
+/// at `frame` relative to its rest pose. `None` when the layer sits outside any rig.
+fn skin_of(tl: &Timeline, index: usize, frame: u32) -> Option<Vec<Affine>> {
+    let mut cur = tl.layers.get(index).and_then(|l| l.parent);
+    for _ in 0..=MAX_LAYER_DEPTH {
+        let p = cur?;
+        let l = tl.layer(p)?;
+        if let Some(s) = l.skeleton.as_ref().filter(|s| !s.is_empty()) {
+            return Some(s.skin_matrices(frame));
+        }
+        cur = l.parent;
+    }
+    None
+}
+
+/// The path with every point drawn through the bound bones (ADR 0104): each point's stage
+/// position is the weighted average of the bones' skin matrices applied to it. The elbow
+/// doesn't bend the curve handles (linear blend, Moho's simplest binding).
+fn deform_path(path: &Path, skins: &[Affine], binds: &[(crate::BoneId, f32)], el_xf: &Affine) -> Path {
+    let total: f32 = binds.iter().map(|(_, w)| w.max(0.0)).sum();
+    let mut out = Path::default();
+    if total <= 1e-6 {
+        return out;
+    }
+    let blended = |p: anicraft_geom::Vec2| -> anicraft_geom::Vec2 {
+        let q = el_xf.apply(p);
+        let mut acc = anicraft_geom::Vec2::ZERO;
+        for (b, w) in binds {
+            if let Some(m) = skins.get(b.0 as usize) {
+                let r = m.apply(q) * (w.max(0.0) / total);
+                acc = anicraft_geom::Vec2::new(acc.x + r.x, acc.y + r.y);
+            }
+        }
+        acc
+    };
+    for cmd in &path.cmds {
+        out.cmds.push(match *cmd {
+            PathCmd::MoveTo(p) => PathCmd::MoveTo(blended(p)),
+            PathCmd::LineTo(p) => PathCmd::LineTo(blended(p)),
+            PathCmd::CubicTo(c1, c2, p) => PathCmd::CubicTo(blended(c1), blended(c2), blended(p)),
+            PathCmd::QuadTo(c, p) => PathCmd::QuadTo(blended(c), blended(p)),
+            PathCmd::Close => PathCmd::Close,
+        });
+    }
+    out
+}
+
 /// The path a guide layer's first shape traces at `frame`, in the layer's own space.
-pub fn guide_walk(guide: &Layer, frame: u32) -> Option<PathWalk> {
-    let (_, els) = evaluate_layer_elements(guide, frame)?;
+pub fn guide_walk(guide: &Layer, frame: u32) -> Option<PathWalk> {    let (_, els) = evaluate_layer_elements(guide, frame)?;
     els.iter().find_map(|e| match &e.kind {
         ElementKind::Shape(s) => {
             let line = s.path.flatten(&e.transform, 0.25).into_iter().next()?;
@@ -381,7 +427,7 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
         }
     }
     // Folders draw nothing themselves, and a hidden folder hides everything in it.
-    let walk = Walk { clips: &clips, has_folders: tl.layers.iter().any(|l| l.kind == LayerKind::Folder), inside: None, play };
+    let walk = Walk { clips: &clips, has_folders: tl.layers.iter().any(|l| l.kind.is_container()), inside: None, play };
     eval_layers(doc, tl, frame, cx, 0..tl.layers.len(), &walk, out);
 }
 
@@ -412,7 +458,7 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
         for _ in 0..=MAX_LAYER_DEPTH {
             let Some(p) = cur else { return false };
             let Some(l) = tl.layer(p) else { return false };
-            if l.kind == LayerKind::Folder && l.composites() {
+            if l.kind.is_container() && l.composites() {
                 return Some(p) != walk.inside;
             }
             cur = l.parent;
@@ -427,12 +473,12 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
         if !layer.visible || matches!(layer.kind, LayerKind::Camera) || (is_guide && cx.masks.is_some()) || (walk.has_folders && tl.hidden_by_folder(index)) {
             continue;
         }
-        // A folder (with or without semantics) inside a compositing run is that run's
-        // folder's business, not this pass's.
-        if layer.kind == LayerKind::Folder && drawn_by_folder(index) {
+        // A container (with or without semantics) inside a compositing run is that run's
+        // container's business, not this pass's.
+        if layer.kind.is_container() && drawn_by_folder(index) {
             continue;
         }
-        if layer.kind == LayerKind::Folder {
+        if layer.kind.is_container() {
             // A folder with compositing semantics draws its children as one group: their
             // transforms chain through it, its opacity fades them together (overlaps don't
             // show through), and its filters apply to the composite.
@@ -473,7 +519,7 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
         // `camera_immune` layer sees neither camera, and every top-level layer also carries
         // its own transform channels. Inside symbols the enclosing instance's transform
         // already says where everything is, but a folder there still moves its run.
-        let own = if cx.depth == 0 || layer.kind == LayerKind::Folder { layer.transform_at(frame) } else { Affine::IDENTITY };
+        let own = if cx.depth == 0 || layer.kind.is_container() { layer.transform_at(frame) } else { Affine::IDENTITY };
         let layer_xf = if cx.depth == 0 {
             let base = if layer.camera_immune || cx.immune {
                 cx.xf
@@ -514,25 +560,45 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
             let color = cx.color.concat(&el.color);
             let group = layer_group.or(cx.group);
             match &el.kind {
-                ElementKind::Shape(s) => out.items.push(DisplayItem {
-                    path: s.path.clone(),
-                    transform: xf,
-                    fill: s.fill.clone(),
-                    stroke: s.stroke.clone(),
-                    fill_rule: s.fill_rule,
-                    color,
-                    layer: root_layer,
-                    element: root_el,
-                    outline: layer_outline,
-                    clip,
-                    masks,
-                    guide,
-                    group,
-                    image: match &s.fill {
-                        Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
-                        _ => None,
-                    },
-                }),
+                ElementKind::Shape(s) => {
+                    // Artwork bound to an enclosing bone layer's skeleton rides its bones
+                    // (ADR 0104): one full-weight bone composes its matrix into the
+                    // transform; several bones deform the path (linear blend skinning).
+                    let (path, xf) = if s.bind.is_empty() {
+                        (s.path.clone(), xf)
+                    } else {
+                        let skins = skin_of(tl, index, frame);
+                        match skins.as_deref() {
+                            Some(skins) => match s.bind.as_slice() {
+                                [(b, w)] if (*w - 1.0).abs() < 1e-3 => {
+                                    let m = skins.get(b.0 as usize).copied().unwrap_or(Affine::IDENTITY);
+                                    (s.path.clone(), layer_xf.mul(&m).mul(&el.transform))
+                                }
+                                binds => (Arc::new(deform_path(&s.path, skins, binds, &el.transform)), layer_xf),
+                            },
+                            None => (s.path.clone(), xf),
+                        }
+                    };
+                    out.items.push(DisplayItem {
+                        path,
+                        transform: xf,
+                        fill: s.fill.clone(),
+                        stroke: s.stroke.clone(),
+                        fill_rule: s.fill_rule,
+                        color,
+                        layer: root_layer,
+                        element: root_el,
+                        outline: layer_outline,
+                        clip,
+                        masks,
+                        guide,
+                        group,
+                        image: match &s.fill {
+                            Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
+                            _ => None,
+                        },
+                    })
+                }
                 ElementKind::Text(t) => out.items.push(DisplayItem {
                     path: t.outline.clone(),
                     transform: xf,

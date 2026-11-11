@@ -268,7 +268,7 @@ pub(crate) fn erasable_layers(s: &Session) -> Vec<(anicraft_doc::LayerId, usize)
     let tl = s.doc.timeline(s.scene);
     tl.layers
         .iter()
-        .filter(|l| l.visible && !l.locked && !tl.locked_by_folder(l.id) && !matches!(l.kind, LayerKind::Folder | LayerKind::Camera))
+        .filter(|l| l.visible && !l.locked && !tl.locked_by_folder(l.id) && !matches!(l.kind, LayerKind::Folder | LayerKind::Bone | LayerKind::Camera))
         .filter_map(|l| l.keyframe_at(s.frame).map(|k| (l.id, k.elements.len())))
         .filter(|(_, n)| *n > 0)
         .collect()

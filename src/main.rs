@@ -22,6 +22,7 @@ mod a11y;
 mod actions_panel;
 mod app;
 mod autosave;
+mod bonetool;
 mod brushtool;
 mod envelope;
 mod erasertool;

@@ -30,6 +30,7 @@ fn tool_icon(tool: Tool) -> Icon {
         Tool::PaintBucket => Icon::Bucket,
         Tool::InkBottle => Icon::Ink,
         Tool::Eyedropper => Icon::Eyedropper,
+        Tool::Bone => Icon::Bone,
         Tool::Camera => Icon::Camera,
         Tool::Hand => Icon::Hand,
         Tool::Zoom => Icon::Zoom,
@@ -1087,11 +1088,17 @@ fn document_props(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn frame_props(app: &mut App, ui: &mut egui::Ui, layer: &anicraft_engine::doc::Layer, frame: u32) {
-    if layer.kind == anicraft_engine::doc::LayerKind::Folder {
+    if layer.kind.is_container() {
         let tl = app.s.doc.timeline(app.s.scene);
         let n = tl.layers.iter().position(|l| l.id == layer.id).map_or(0, |i| tl.group_range(i).len().saturating_sub(1));
         let what = if n == 1 { "1 layer".to_string() } else { format!("{n} layers") };
-        ui.label(text(Type::Label, format!("Folder · {what}")));
+        let bones = layer.skeleton.as_ref().map_or(0, |s| s.bones.len());
+        let rig = if layer.kind == anicraft_engine::doc::LayerKind::Bone {
+            format!("Bone rig · {} {} · {what}", bones, if bones == 1 { "bone" } else { "bones" })
+        } else {
+            format!("Folder · {what}")
+        };
+        ui.label(text(Type::Label, rig));
         ui.label(text(Type::Caption, "Folders hold layers, not frames. Hiding or locking the folder hides or locks everything in it; move layers in under it with Up and Down."));
         return;
     }

@@ -16,6 +16,7 @@ mod eval;
 mod hints;
 pub mod motion;
 pub mod path_table;
+pub mod rig;
 pub mod width;
 pub mod player;
 pub mod sample;
@@ -30,6 +31,7 @@ pub use motion::{MotionTween, OnPath, Property, PropertyKey, Props, Track, motio
 pub use sound::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundFormat, SoundId, SoundSync};
 pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile};
 pub use camera::Camera;
+pub use rig::{Action as BoneAction, Bone, BoneId, Skeleton, MAX_BONES};
 pub use eval::{DisplayItem, DisplayList, Group, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_player, evaluate_scene, evaluate_scene_camera, guide_walk, instance_start};
 pub use actions::{Action, ButtonEvent, EventHandler, FrameScript, Language, PluginScript, SourceScript};
 
@@ -248,17 +250,22 @@ pub struct Shape {
     /// Otherwise a drawing object, which keeps to itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub merge: bool,
+    /// The bones this shape rides (ADR 0104): `(bone, weight)` pairs of the enclosing bone
+    /// layer's skeleton, weights summing to about 1. Empty draws unbound. Moho's single-bone
+    /// point bindings arrive as one pair at weight 1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bind: Vec<(BoneId, f32)>,
 }
 
 impl PartialEq for Shape {
     fn eq(&self, o: &Shape) -> bool {
-        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge
+        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge && self.bind == o.bind
     }
 }
 
 impl Shape {
     pub fn filled(path: Path, fill: Paint) -> Shape {
-        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false }
+        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new() }
     }
     pub fn with_stroke(mut self, color: Rgba, width: f32) -> Shape {
         self.stroke = Some(Stroke::new(color, width));
@@ -640,9 +647,21 @@ pub enum LayerKind {
     /// Holds layers (its children name it as their [`Layer::parent`]); draws nothing itself.
     /// Hiding or locking a folder hides or locks everything in it.
     Folder,
+    /// Holds layers and a skeleton (ADR 0104): the rig its children's artwork binds to.
+    /// Like a folder it draws nothing itself; its bones move the bound artwork at
+    /// evaluation time. Its children name it as their [`Layer::parent`].
+    Bone,
     /// The camera (ADR 0027): at most one per scene timeline, always the top layer; its
     /// keyframes hold the camera, which views every other layer. Draws nothing itself.
     Camera,
+}
+
+impl LayerKind {
+    /// Kinds that hold other layers and draw nothing themselves: a folder and a bone rig
+    /// (ADR 0104). Hiding, locking and nesting treat both alike.
+    pub fn is_container(self) -> bool {
+        matches!(self, LayerKind::Folder | LayerKind::Bone)
+    }
 }
 
 /// Deepest nesting of folders (and a mask inside them) that is kept.
@@ -734,6 +753,10 @@ pub struct Layer {
     /// blur, shadow, noise, pixelation, threshold). Empty for most layers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filters: Vec<Filter>,
+    /// The rig a bone layer carries (ADR 0104): the skeleton its children's artwork binds
+    /// to, addressed by [`BoneId`]. `None` on every other layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skeleton: Option<Arc<Skeleton>>,
 }
 
 fn is_zero2(v: &Vec2) -> bool {
@@ -774,6 +797,7 @@ impl PartialEq for Layer {
             && arcs_eq(&self.keyframes, &o.keyframes)
             && self.opacity == o.opacity
             && self.filters == o.filters
+            && self.skeleton == o.skeleton
     }
 }
 
@@ -809,6 +833,7 @@ impl Layer {
             camera_immune: false,
             opacity: Channel::default(),
             filters: Vec::new(),
+            skeleton: None,
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by
@@ -830,7 +855,7 @@ impl Layer {
     /// (for folders) transform channels — so it renders as one [`crate::Group`], not as plain
     /// layers. Frame-independent, so evaluations stay stable across playback.
     pub fn composites(&self) -> bool {
-        !self.filters.is_empty() || !self.opacity.is_empty() || (self.kind == LayerKind::Folder && self.has_transform())
+        !self.filters.is_empty() || !self.opacity.is_empty() || (self.kind.is_container() && self.has_transform())
     }
     /// The layer's transform channels, sampled at `frame` and composed the way Moho composes
     /// them: translation, then rotation, shear and scale (flips included), all around the
@@ -880,6 +905,13 @@ impl Layer {
         }
         if !self.origin.x.is_finite() || !self.origin.y.is_finite() {
             self.origin = Vec2::ZERO;
+        }
+        // The skeleton repairs on load (bounded, cycle-free, finite); bones are rare, so
+        // a copy when one is present costs nothing worth optimizing.
+        if let Some(s) = self.skeleton.as_ref() {
+            let mut fixed = (**s).clone();
+            fixed.sanitize();
+            self.skeleton = Some(Arc::new(fixed));
         }
     }
     /// The gain this layer gives its sounds: its volume, or silence when muted.
@@ -1014,7 +1046,7 @@ impl Timeline {
     pub fn container_at(&self, index: usize, kind: LayerKind) -> Option<LayerId> {
         let above = self.layers.get(index.checked_sub(1)?)?;
         let slot = match above.kind {
-            LayerKind::Folder | LayerKind::Mask | LayerKind::Guide => Some(above.id),
+            LayerKind::Folder | LayerKind::Bone | LayerKind::Mask | LayerKind::Guide => Some(above.id),
             _ => above.parent,
         };
         let p = self.layer(slot?)?;
@@ -1068,7 +1100,7 @@ impl Timeline {
                 }
                 let l = self.layer(p)?;
                 cur = l.parent;
-                if l.kind == LayerKind::Folder {
+                if l.kind.is_container() {
                     return Some(l);
                 }
             }
@@ -1110,7 +1142,7 @@ impl Timeline {
         let Some(l) = self.layers.get(i) else { return false };
         let above = i.checked_sub(1).and_then(|a| self.layers.get(a));
         match self.layer(p).filter(|_| self.index_of(p).is_some_and(|pi| pi < i)).map(|x| x.kind) {
-            Some(LayerKind::Folder) => above.is_some_and(|a| a.id == p || self.is_inside(i - 1, p)) && self.depth_of_parent(p) + 1 < MAX_LAYER_DEPTH,
+            Some(k) if k.is_container() => above.is_some_and(|a| a.id == p || self.is_inside(i - 1, p)) && self.depth_of_parent(p) + 1 < MAX_LAYER_DEPTH,
             Some(LayerKind::Mask | LayerKind::Guide) => l.kind == LayerKind::Normal && above.is_some_and(|a| a.id == p || a.parent == Some(p)),
             _ => false,
         }

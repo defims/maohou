@@ -41,10 +41,12 @@ struct Curve {
     pts: Vec<CurveRef>,
 }
 
-/// The mesh's static geometry, shared by all its shapes.
+/// The mesh's static geometry, shared by all its shapes. `parents` mirrors `positions`:
+/// each point's bound bone (Moho's `Point.parent`, negative = unbound).
 struct MeshData {
     positions: Vec<Vec2>,
     curves: Vec<Curve>,
+    parents: Vec<i64>,
 }
 
 /// Builds the shape elements of one mesh. `world` is the layer's own inch-space transform
@@ -71,6 +73,7 @@ fn parse_mesh(b: &mut Builder, mesh: &Value) -> Option<MeshData> {
         return None;
     }
     let mut positions = Vec::with_capacity(points.len());
+    let parents: Vec<i64> = points.iter().map(|p| json::integer(get(p, "parent")).unwrap_or(-2)).collect();
     for p in points {
         let pos = get(p, "position").and_then(Channel::parse).and_then(|c| channel::sample_vec2(&c, b.frame).map(|v| (c, v)));
         match pos {
@@ -116,7 +119,7 @@ fn parse_mesh(b: &mut Builder, mesh: &Value) -> Option<MeshData> {
             curves.push(Curve { closed, pts });
         }
     }
-    Some(MeshData { positions, curves })
+    Some(MeshData { positions, curves, parents })
 }
 
 /// Point-level extras that change what is drawn, counted when non-default.
@@ -129,13 +132,11 @@ fn report_point_features(b: &mut Builder, mesh: &Value) {
     if pts.iter().any(|p| get(p, "width").and_then(Channel::parse).is_some_and(|c| channel::sample_f64(&c, frame).is_some_and(|w| (w - 1.0).abs() > 1e-6))) {
         b.report.skip("variable point widths (drawn uniform)");
     }
-    if pts.iter().any(|p| json::integer(get(p, "parent")).is_some_and(|i| i != -2)) {
-        b.report.skip("points bound to bones");
-    }
 }
 
 /// One shape: its outline plus fill/stroke, as one fill-only and one stroke-only element
-/// (AniCraft draws them separately, as the XFL importer does).
+/// (AniCraft draws them separately, as the XFL importer does). Both carry the shape's
+/// bone binding (ADR 0104) when its points all hang off one bone.
 fn shape_element(b: &mut Builder, shape: &Value, data: &MeshData, transform: Affine, out: &mut Vec<Arc<Element>>) {
     let has_fill = json::boolean(get(shape, "has_fill")).unwrap_or(false);
     let has_outline = json::boolean(get(shape, "has_outline")).unwrap_or(false);
@@ -146,6 +147,7 @@ fn shape_element(b: &mut Builder, shape: &Value, data: &MeshData, transform: Aff
     if path.is_empty() {
         return;
     }
+    let bind = shape_bind(b, shape, data);
     let (fill, stroke) = shape_paint(b, shape, &path, has_fill, has_outline);
     shape_flags(b, shape);
     let fx = ColorEffect::default();
@@ -155,7 +157,7 @@ fn shape_element(b: &mut Builder, shape: &Value, data: &MeshData, transform: Aff
             name: String::new(),
             transform,
             color: fx,
-            kind: ElementKind::Shape(Shape { path: Arc::new(path.clone()), fill: Some(p), stroke: None, fill_rule: FillRule::NonZero, merge: false }),
+            kind: ElementKind::Shape(Shape { path: Arc::new(path.clone()), fill: Some(p), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: bind.clone() }),
         }));
     }
     if let Some(s) = stroke {
@@ -164,8 +166,35 @@ fn shape_element(b: &mut Builder, shape: &Value, data: &MeshData, transform: Aff
             name: String::new(),
             transform,
             color: fx,
-            kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: Some(s), fill_rule: FillRule::NonZero, merge: false }),
+            kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: Some(s), fill_rule: FillRule::NonZero, merge: false, bind }),
         }));
+    }
+}
+
+/// The shape's bone binding: the distinct bone its points hang off (Moho's single-bone
+/// `Point.parent` reads as one pair at weight 1, ADR 0104). A shape spanning several bones
+/// — mixed weights the model doesn't hold yet — draws at rest, and the report says so.
+fn shape_bind(b: &mut Builder, shape: &Value, data: &MeshData) -> Vec<(anicraft_doc::BoneId, f32)> {
+    let Some(edges) = get(shape, "edges") else { return Vec::new() };
+    let cs = array(get(edges, "curve")).unwrap_or(&[]);
+    let mut bones: Vec<u32> = Vec::new();
+    for ci in cs.iter().filter_map(|v| json::integer(Some(v)).and_then(|i| usize::try_from(i).ok())) {
+        let Some(curve) = data.curves.get(ci) else { continue };
+        for r in &curve.pts {
+            let Some(p) = data.parents.get(r.point) else { continue };
+            let Ok(bone) = u32::try_from(*p) else { continue }; // negative = unbound
+            if !bones.contains(&bone) {
+                bones.push(bone);
+            }
+        }
+    }
+    match bones.as_slice() {
+        [] => Vec::new(),
+        [one] => vec![(anicraft_doc::BoneId(*one), 1.0)],
+        _ => {
+            b.report.skip("shapes bound to several bones (drawn at rest)");
+            Vec::new()
+        }
     }
 }
 

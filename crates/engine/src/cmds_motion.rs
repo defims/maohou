@@ -413,7 +413,7 @@ pub(crate) fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let (start, ids) = {
         let tl = s.doc.timeline(s.scene);
         let layer = tl.layer(lid).ok_or_else(|| EngineError::State(format!("no layer with id {}", lid.0)))?;
-        if layer.kind == LayerKind::Folder {
+        if layer.kind.is_container() {
             return Err(EngineError::State("a folder holds layers, not frames; pick a layer inside it".into()));
         }
         let k = layer.keyframe_at(frame).ok_or_else(|| EngineError::State(format!("frame {} is empty on this layer", frame + 1)))?;

@@ -7,7 +7,7 @@ use crate::params::*;
 use crate::{CommandSpec, EngineError, MAX_FRAME, Result, Session};
 use anicraft_doc::audio::{Voice, mix, wav};
 use anicraft_doc::sound::{self, MAX_ENVELOPE_POINTS, MAX_ENVELOPE_SECONDS, MAX_REPEAT, clean_points, frame_start};
-use anicraft_doc::{EnvelopePoint, FrameSound, LayerKind, Sound, SoundEffect, SoundId, SoundSync, Timeline};
+use anicraft_doc::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundId, SoundSync, Timeline};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -209,7 +209,7 @@ fn place(s: &mut Session, p: &Value) -> Result<Value> {
     let (lid, frame) = target(s, p)?;
     let extend = opt_bool(p, "extend")?.unwrap_or(false);
     let layer = s.layer_mut(lid)?;
-    if layer.kind == LayerKind::Folder {
+    if layer.kind.is_container() {
         return Err(EngineError::State(format!("'{}' is a folder; sounds go on a layer's keyframes", layer.name)));
     }
     if layer.keyframe_index_at(frame).is_none() {
@@ -289,7 +289,7 @@ fn set_volume(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Param("pass 'volume' (0–1), 'muted' or both".into()));
     }
     let layer = s.layer_mut(opt_u64(p, "layer")?.map(anicraft_doc::LayerId))?;
-    if layer.kind == LayerKind::Folder {
+    if layer.kind.is_container() {
         return Err(EngineError::State(format!("'{}' is a folder; set the volume of the layers in it", layer.name)));
     }
     if let Some(v) = volume {

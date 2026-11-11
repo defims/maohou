@@ -4,6 +4,22 @@
 
 ## Unreleased
 
+* **The bone system** (ADR 0104). Moho rigs import and animate: a `BoneLayer`'s skeleton
+  comes across whole — the hierarchy, the per-bone angle/position/scale/IK-target channels
+  (y-flipped to the stage's units like every channel), the angle constraints — with every
+  key the model doesn't hold yet captured verbatim in the bone, so files round-trip them.
+  Artwork rides the bones the way Moho binds it: whole-layer bone bindings and single-bone
+  shapes deform with the rig (linear blend at evaluation, identity at the rest pose, so an
+  unposed rig renders exactly as before); shapes spanning several bones draw at rest and are
+  counted. IK aims a two-bone chain at its target bone's tip (the analytic solve, lengths
+  held, unreachable targets clamped). Smart-bone actions ride on the channels and blend by
+  the driving bone's value (Moho's dial semantics being unpublished, this is the documented
+  reading). Bones are editable through commands — `bone.rig_add`, `bone.add`, `bone.set`,
+  `bone.key`, `bone.bind`, `bone.info` and friends — all plug-in callable. `.anicraft` files
+  are format v7 (older files open unchanged). Still approximated: bone dynamics, per-point
+  mixed weights, bone groups and the dial frame-by-frame comparison await working Moho
+  samples (the corpus's two bone fixtures are script-made skeletons with empty meshes).
+
 * **Groups, layer effects, styles and the four gradient fills** (ADR 0103). Moho groups
   import as composites: a folder that carries transform channels, opacity or filters renders
   its whole run as one — the children chain its transform, its opacity fades overlaps as
