@@ -172,6 +172,10 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
 
     // Render/document settings without a slot, counted when non-default.
     document_settings(&mut b.report, pd);
+    // The document soundtrack: a library sound (its movie slot follows a Moho specimen).
+    if let Some(st) = json::string(get(pd, "soundtrack")).filter(|s| !s.is_empty()) {
+        crate::audio::soundtrack(&mut b, &st);
+    }
     named_styles(&mut b, &root);
     let scene_anim = scene_animation(&mut b, get(&root, "animated_values").unwrap_or(&empty));
     if array(get(&root, "layercomps")).is_some_and(|s| !s.is_empty()) {
@@ -226,9 +230,6 @@ fn document_settings(report: &mut Report, pd: &Value) {
     }
     if json::integer(get(pd, "stereo_mode")).is_some_and(|v| v != 0) {
         report.skip("document stereo settings");
-    }
-    if !json::string(get(pd, "soundtrack")).is_none_or(|s| s.is_empty()) {
-        report.skip("document soundtrack");
     }
 }
 

@@ -19,7 +19,7 @@ use crate::anim;
 use crate::channel::{self, Channel};
 use crate::import::{Builder, MOHO_DPI};
 use crate::json::{self, array, get};
-use crate::{image, mesh};
+use crate::{audio, image, mesh};
 use crate::text;
 use anicraft_doc::{Element, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind};
 use anicraft_geom::Affine;
@@ -151,7 +151,11 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
         "NoteLayer" => b.report.skip("note layers"),
         "ParticleLayer" => b.report.skip("particle layers"),
         "PatchLayer" => b.report.skip("patch layers"),
-        "AudioLayer" => b.report.skip("audio layers"),
+        "AudioLayer" => {
+            count_layer_extras(b, layer);
+            audio::audio_layer(b, layer, &mut l);
+            out.push(FlatLayer { layer: l });
+        }
         "" => b.report.skip("layers without a type"),
         other => b.report.skip(&format!("layers of unknown type ({other})")),
     }

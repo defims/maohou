@@ -21,13 +21,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod anim;
+pub mod audio;
 pub mod bone;
 pub mod channel;
+pub mod image;
 pub mod import;
 pub mod json;
 pub mod layer;
-pub mod image;
-mod mesh;
+pub mod mesh;
 pub mod text;
 pub mod zip;
 

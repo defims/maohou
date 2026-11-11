@@ -515,3 +515,72 @@ fn plain_image_layers_draw_their_picture_sized_and_placed() {
     assert!((tl.x - 0.0).abs() < 1e-3 && (tl.y - 0.5).abs() < 1e-3, "top-left at (centre.x-w/2, centre.y+h/2): {tl:?}");
     assert!((br.x - 1.0).abs() < 1e-3 && (br.y - 0.0).abs() < 1e-3, "{br:?}");
 }
+
+fn tiny_wav() -> Vec<u8> {
+    // A 16-bit mono PCM WAV, 8000 Hz, 8 bytes of silence.
+    let data = [0u8; 8];
+    let mut out = Vec::new();
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    out
+}
+
+
+/// An audio layer becomes a library sound and a Stream sound on its keyframe (ADR 0106,
+/// on the upstream audio model): the timeline shows the sound's length, and the report
+/// stays clean.
+#[test]
+fn audio_layers_become_keyframe_sounds() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "AudioLayer", "name": "Boom",
+        "audio_path": "media/boom.wav"
+    });
+    let (doc, report) = import_with_media(&root, "media/boom.wav", tiny_wav());
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert_eq!(doc.sounds.len(), 1, "the file decoded into the library");
+    let l = &doc.timeline(0).layers[0];
+    assert!(l.has_sounds());
+    let k = &l.keyframes[0];
+    let snd = k.sound.as_ref().unwrap();
+    assert_eq!(snd.sync, anicraft_doc::SoundSync::Stream, "a Moho audio layer plays tied to the timeline");
+    assert_eq!(doc.sound(snd.sound).map(|s| s.frames), Some(4));
+    // The span covers the sound's frames at the project rate (8000 Hz over 24 fps < 1 frame → 1).
+    assert_eq!(k.duration, 1);
+    assert!(k.elements.is_empty(), "audio layers draw nothing");
+}
+
+/// An audio file that can't decode is counted, not silently dropped.
+#[test]
+fn undecodable_audio_files_are_counted() {
+    let mut root = minimal();
+    root["layers"][0] = json!({
+        "type": "AudioLayer", "name": "Mystery",
+        "audio_path": "media/song.aiff"
+    });
+    let (doc, report) = import_with_media(&root, "media/song.aiff", b"FORM????AIFF".to_vec());
+    assert!(doc.sounds.is_empty());
+    assert_eq!(report.skipped.get("audio files that are not WAV, Ogg Vorbis or MP3"), Some(&1), "{:?}", report.skipped);
+}
+
+/// The document soundtrack comes across as a library sound with a note.
+#[test]
+fn the_soundtrack_lands_in_the_library() {
+    let mut root = minimal();
+    root["project_data"]["soundtrack"] = json!("media/boom.wav");
+    let (doc, report) = import_with_media(&root, "media/boom.wav", tiny_wav());
+    assert_eq!(doc.sounds.len(), 1, "the soundtrack decoded into the library");
+    assert!(report.notes.iter().any(|n| n.contains("soundtrack")), "{:?}", report.notes);
+    assert!(!report.skipped.contains_key("document soundtrack"), "{:?}", report.skipped);
+}
