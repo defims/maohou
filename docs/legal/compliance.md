@@ -16,6 +16,8 @@ AniCraft is **MIT OR Apache-2.0**, the same as its sibling PhotoCraft (`LICENSE-
   `docs/contributing.md` when it lands). A CLA is not needed for this model.
 * All crates are `publish = false` until publishing is approved.
 
+Code migrated between the family's repositories (EffectCraft's encoders into `anicraft-media`, ADR 0107) keeps this same dual licence; the provenance stays in the crates' module docs, and no licence row of `deny.toml` changes.
+
 ## 2. Dependency policy (enforced)
 
 Allowed: MIT, Apache-2.0 (incl. LLVM exception), BSD-2/3-Clause, ISC, Zlib, 0BSD, BSL-1.0,
