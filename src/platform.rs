@@ -145,6 +145,46 @@ pub fn settings_place() -> String {
     config_dir().map_or_else(|| tr!("memory only").to_string(), |d| d.display().to_string())
 }
 
+/// The system's CJK-capable sans face, for interface text in Chinese (the bundled Latin
+/// typefaces don't cover hanzi). Read at runtime from the OS install and never bundled, like
+/// the user fonts of Preferences (so its licence never binds the distribution): the first
+/// well-known path that exists wins, smallest first. A web page has no file system; the
+/// browser's fonts cover it.
+pub fn cjk_fallback_font() -> Option<(String, Vec<u8>, u32)> {
+    let home = |sub: &[&str]| std::env::var_os("HOME").map(|h| sub.iter().fold(PathBuf::from(h), |p, s| p.join(s)));
+    let candidates: Vec<(PathBuf, u32)> = match OS {
+        Os::Mac => [
+            ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), // i18n-exempt: a system font file path
+            ("/System/Library/Fonts/STHeiti Medium.ttc", 0), // i18n-exempt: a system font file path
+            ("/System/Library/Fonts/PingFang.ttc", 0), // i18n-exempt: a system font file path
+        ]
+        .iter()
+        .map(|(p, i)| (PathBuf::from(p), *i))
+        .collect(),
+        Os::Windows => {
+            let windir = std::env::var_os("WINDIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\Windows"));
+            [("Fonts\\msyh.ttc", 0), ("Fonts\\msyh.ttf", 0), ("Fonts\\simhei.ttf", 0)].iter().map(|(p, i)| (windir.join(p), *i)).collect()
+        }
+        Os::Linux | Os::Other => [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        ]
+        .iter()
+        .map(|p| (PathBuf::from(*p), 0))
+        .chain(home(&[".fonts", "NotoSansCJK-Regular.ttc"]).into_iter().map(|p| (p, 0)))
+        .collect(),
+        Os::Web => Vec::new(),
+    };
+    for (path, index) in candidates {
+        if let Ok(bytes) = std::fs::read(&path) {
+            return Some((path.file_stem()?.to_string_lossy().into_owned(), bytes, index));
+        }
+    }
+    None
+}
+
 /// The saved preferences (JSON): `prefs.json` in the settings folder, or browser storage.
 pub fn load_settings() -> Option<String> {
     #[cfg(target_arch = "wasm32")]

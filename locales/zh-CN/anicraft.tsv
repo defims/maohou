@@ -1,0 +1,1546 @@
+# 简体中文 (zh-cn) interface catalog for AniCraft.
+# Written from the plain meaning of the English strings in ordinary computing
+# vocabulary (clean room); no other product's localisation was consulted or copied.
+# Format: context <TAB> English <TAB> translation; @plural rows carry this
+# language's forms (Chinese has one); @id rows map ids to labels.
+
+@id	language.name	简体中文
+	+ Layer	+ 图层
+	// Type or paste a frame script	// 输入或粘贴帧脚本
+	1 minute	1 分钟
+	10 minutes	10 分钟
+	100 %: as wide as it is tall. Less flattens the tip, for calligraphic strokes	100%：宽度与高度相等。数值越小笔尖越扁，适合书法笔触
+	2 minutes	2 分钟
+	30 seconds	30 秒
+	5 minutes	5 分钟
+	A bone ends on another symbol instance: release over the instance it should move.	骨骼的末端落在另一个元件实例上：在它要移动的实例上松开鼠标即可。
+	A frame script: it runs while the movie plays. Pick it for a keyframe in the Actions panel (F9)	帧脚本：随影片播放而运行。在动作面板（F9）中可为关键帧选择它
+	A list of actions, in order	按顺序排列的动作列表
+	A pinned bone, and the bones it hangs from, stay put while you drag the bones below it	拖动其下方的骨骼时，已固定的骨骼以及它所依附的骨骼会保持不动
+	A recovery copy of your unsaved work. If AniCraft closes unexpectedly, the next start offers it back.	未保存工作的恢复副本。如果 AniCraft 意外关闭，下次启动时会提供恢复。
+	A round eraser	圆形橡皮擦
+	A round or oval tip	圆形或椭圆笔尖
+	A script runs only when all of it is in the ActionScript 3.0 subset AniCraft runs: timeline control (stop, play, go to a frame or label), mouse listeners, trace, and setting x, y, alpha, visible, rotation and scale on named instances. Until then it is kept as written and doesn't run.	只有当脚本全部位于 AniCraft 所支持的 ActionScript 3.0 子集内时才会运行：时间轴控制（stop、play、跳转到帧或标签）、鼠标监听器、trace，以及对命名实例设置 x、y、alpha、visible、rotation 和 scale。在此之前，脚本会按原样保留且不会运行。
+	A sound keeps at least one point	声音至少保留一个点
+	A square eraser	方形橡皮擦
+	A square or flat tip	方形或扁平笔尖
+	ANICRAFT_STAGE_RENDERER is set, and it takes precedence over this choice.	已设置 ANICRAFT_STAGE_RENDERER，它优先于此项选择。
+	About AniCraft	关于 AniCraft
+	ActionScript 1.0 & 2.0	ActionScript 1.0 & 2.0
+	ActionScript 3.0	ActionScript 3.0
+	Actions	动作
+	Actions Panel	动作面板
+	Actions…	动作…
+	Actual size (100%)	实际大小（100%）
+	Add	添加
+	Add Anchor Point	添加锚点
+	Add Bone	添加骨骼
+	Add Bone Rig	添加骨骼绑定
+	Add Camera	添加摄像机
+	Add Classic Motion Guide	添加传统运动引导层
+	Add Envelope Point	添加封套点
+	Add Motion Path Point	添加运动路径点
+	Add Shape Hint	添加形状提示
+	Add Timeline Marker	添加时间轴标记
+	Add a point where the object is on frame {frame}, pinned to it: nothing moves now, and the object passes the point then however the path is edited	在对象位于帧 {frame} 时的位置添加一个点并将其固定到该帧：现在不会移动任何东西，且无论之后如何编辑路径，对象届时都会经过该点
+	Add a shortcut	添加快捷键
+	Add a shortcut for {action}	为 {action} 添加快捷键
+	Add a {property} keyframe at frame {frame}	在帧 {frame} 添加 {property} 关键帧
+	Add action	添加动作
+	Add another shortcut	添加其他快捷键
+	Add another shortcut for {action}	为 {action} 添加其他快捷键
+	Add camera	添加摄像机
+	Add colour stop	添加色标
+	Add event	添加事件
+	Add filter	添加滤镜
+	Add to / remove from selection	添加到选择/从选择中移除
+	Added a camera. Drag on the stage to pan it, turn it with the round handle, zoom with the wheel. {undo} to undo.	已添加摄像机。在舞台上拖动可平移，用圆形手柄旋转，用滚轮缩放。按 {undo} 可撤销。
+	Added a point to the motion path. {undo} to undo.	已向运动路径添加一个点。按 {undo} 可撤销。
+	Added a point. {undo} to undo.	已添加一个点。按 {undo} 可撤销。
+	Added shape hint {letter}: drag it onto an edge here, then onto the matching edge on the tween's last keyframe.	已添加形状提示 {letter}：将它拖到此处的一条边上，再拖到补间最后一个关键帧上的对应边上。
+	Adds it at the centre of the view, on the active layer (Enter, or drag it onto the stage)	将其添加到视图中心的活动图层上（按 Enter，或将其拖到舞台上）
+	Adjust Color	调整颜色
+	Adjust colour	调整颜色
+	After	之后
+	After colour	之后的颜色
+	Agent / contributor guide	智能体与贡献者指南
+	Align	对齐
+	Align centre	居中对齐
+	Align left	左对齐
+	Align on Multiple Frames	多帧对齐
+	Align right	右对齐
+	Align to Stage On / Off	相对舞台对齐 开/关
+	Align to the stage instead of the selection's bounds (a single shape always aligns to the stage)	以舞台为基准对齐，而不是以选择的边界为基准（单个形状始终以舞台为基准对齐）
+	Align: to stage	对齐：相对于舞台
+	Align: to the selection	对齐：相对于选择
+	Allow Smoothing	允许平滑
+	Allow smoothing	允许平滑
+	Alpha	Alpha
+	Also morphs one shape into another	还可以将一个形状变形为另一个形状
+	Always Show Markers	始终显示标记
+	Always render off the UI thread. The window never waits; the picture can trail by a frame.	始终在 UI 线程以外渲染。窗口从不需要等待，但画面可能滞后一帧。
+	Amount	数量
+	An entry point of a frame-script plug-in (WebAssembly)	帧脚本插件（WebAssembly）的一个入口点
+	Anchor Markers	锚点标记
+	Angle	角度
+	Angle gradient	角度渐变
+	AniCraft document	AniCraft 文档
+	AniCraft is free software: MIT OR Apache-2.0, at your option.	AniCraft 是自由软件：采用 MIT OR Apache-2.0 许可证，可任选其一。
+	AniCraft: Apache License 2.0	AniCraft：Apache License 2.0
+	AniCraft: MIT License	AniCraft：MIT License
+	Animate each property on its own curve	让每个属性沿各自的曲线做动画
+	Animate this span's object property by property	逐个属性为该片段的对象制作动画
+	Animate this span's object property by property (edit the curves in the Motion Editor)	逐个属性为该片段的对象制作动画（在动作编辑器中编辑曲线）
+	Animated GIF	动画 GIF
+	Appearance	外观
+	Apply Style	应用样式
+	Architecture philosophy	架构理念
+	Armature	骨架
+	Armatures	骨架
+	Arrange	排列
+	Arrow keys	方向键
+	Artwork on Multiple Frames	多帧图稿
+	Ascending: click for descending	升序：点击切换为降序
+	At the centre of the view, on the active layer (Enter; or drag onto the stage)	在视图中心的活动图层上（按 Enter；或拖到舞台上）
+	Auto	自动
+	Autosave	自动保存
+	Autosave Now	立即自动保存
+	Autosave after this many changes	更改达到此次数后自动保存
+	Autosave every	自动保存间隔
+	Autosave failed: {error}. Save your work to be safe; AniCraft will keep trying.	自动保存失败：{error}。为防意外请手动保存工作；AniCraft 会继续尝试。
+	Autosave is off on this system, so there is nothing to recover	此系统上自动保存已关闭，因此没有可恢复的内容
+	Autosave is off: this system has no settings folder	自动保存已关闭：此系统没有设置文件夹
+	Autosave is off: {error}	自动保存已关闭：{error}
+	Back to the default ({keys})	恢复默认（{keys}）
+	Back to the stage as it is: centred, 100 %, no turn, no tint	回到舞台原样：居中、100%、无旋转、无着色
+	Back to the straight path the X and Y curves trace	回到 X 和 Y 曲线勾画的直线路径
+	Back to the theme's colours	恢复主题的颜色
+	Back to this symbol	返回此元件
+	Background	背景
+	Bake Physics	烘焙物理效果
+	Before	之前
+	Before colour	之前的颜色
+	Bend	弯曲
+	Bend Segment	弯曲分段
+	Bevel	斜角
+	Bevel highlight colour	斜角高光颜色
+	Bevel offset	斜角偏移
+	Bevel shadow colour	斜角阴影颜色
+	Bind to Bone	绑定到骨骼
+	Bitmap	位图
+	Bitmap fill	位图填充
+	Bitmap · {width}×{height}	位图 · {width}×{height}
+	Blank	空白
+	Blank Keyframe	空白关键帧
+	Blending	混合
+	Blue keys are pinned motion path points: drag one to move its point	蓝色关键帧是已固定的运动路径点：拖动即可移动对应的点
+	Blur	模糊
+	Bold	粗体
+	Bone	骨骼
+	Bone Info	骨骼信息
+	Bone Key	骨骼关键帧
+	Bone Settings	骨骼设置
+	Bone angle	骨骼角度
+	Bone rig	骨骼绑定
+	Bone: {name}	骨骼：{name}
+	Bottom	底部
+	Break Apart	分离
+	Brightness	亮度
+	Bring Forward	上移一层
+	Bring to Front	移至最前
+	Brush	画笔
+	Brush Size Down	减小画笔大小
+	Brush Size Up	增大画笔大小
+	Brush Stroke	画笔笔触
+	Brush angle	画笔角度
+	Brush roundness	画笔圆度
+	Brush size	画笔大小
+	Brush size ({keys})	画笔大小（{keys}）
+	Brush size {size} px	画笔大小 {size} 像素
+	Brush smoothing	画笔平滑
+	Bulge	凸出
+	Button	按钮
+	Button (unnamed)	按钮（未命名）
+	Button “{name}”	按钮“{name}”
+	Button: {name}	按钮：{name}
+	CPU (GPU unavailable)	CPU（GPU 不可用）
+	CPU (reference)	CPU（参考）
+	CPU for {reason}	因 {reason} 使用 CPU
+	Camera	摄像机
+	Camera Info	摄像机信息
+	Camera Position	摄像机位置
+	Camera Roll	摄像机滚转
+	Camera Tint	摄像机着色
+	Camera X	摄像机 X
+	Camera Y	摄像机 Y
+	Camera Zoom	摄像机缩放
+	Camera rotation	摄像机旋转
+	Camera tint amount	摄像机着色强度
+	Camera tint colour	摄像机着色颜色
+	Camera view	摄像机视图
+	Camera zoom	摄像机缩放
+	Cancel	取消
+	Cancelled	已取消
+	Cap	端点
+	Centre	中心
+	Changed the stroke's width. {undo} to undo.	已更改描边宽度。按 {undo} 可撤销。
+	Change…	更改…
+	Check Frame Script	检查帧脚本
+	Class	类
+	Classic	传统
+	Classic tween	传统补间
+	Classic {strength}	传统 {strength}
+	Clear	清除
+	Clear Actions	清除动作
+	Clear Bone Channel	清除骨骼通道
+	Clear Frame Script	清除帧脚本
+	Clear Keyframe	清除关键帧
+	Clear Layer Effects	清除图层效果
+	Clear Layer Opacity	清除图层不透明度
+	Clear Layer Transform	清除图层变形
+	Clear Playback Frame Range	清除播放帧范围
+	Clear on Multiple Frames	多帧清除
+	Cleared keyframe — {undo} to undo	已清除关键帧 — {undo} 可撤销
+	Clears every visible, unlocked layer at this frame, as double-clicking the Eraser tool does. You can undo it	清除此帧上所有可见且未锁定的图层，效果如同双击橡皮擦工具。可以撤销
+	Click	单击
+	Click a fill or an enclosed area to pour it.	单击填充或封闭的区域即可倒入颜色。
+	Click a fill to pick its colour, gradient or bitmap (then pour it with the Paint Bucket), or a line to pick its colour, width and profile (then apply it with the Ink Bottle). With shapes selected, the picked style goes onto them. Shift-click picks into the other swatch only.	单击填充可拾取其颜色、渐变或位图（随后用油漆桶倒色），单击线条可拾取其颜色、宽度和宽度曲线（随后用墨水瓶应用）。选中图形时，拾取的样式会应用到所选图形上。按住 Shift 单击则只会拾取到另一个色板。
+	Click a key to change it or + to add one; right-click a key to remove it. Changes save as you go.	单击某个键进行更改，或单击 + 添加一个；右键单击某个键可将其移除。更改即时保存。
+	Click a shape to give it the current stroke colour and width.	单击图形可为其应用当前描边颜色和宽度。
+	Click a shape to give it this line.	单击图形可为其应用此线条。
+	Click a shape to show its points; on a merged drawing, the points of everything connected to it. Drag points or handles to reshape (a shared point moves every shape that has it; a smooth point's handles stay in line, Alt moves one alone); drag a line or fill to move everything connected. Shift adds to the point selection, drag on empty space to marquee points, arrow keys nudge them. Double-click an edge to add a point, Delete removes points, and right-click makes a point smooth or a corner. A motion path's points edit the same way (its ends stay).	单击图形可显示其节点；对于合并绘制的图形，会显示与其相连的所有内容的节点。拖动节点或手柄可改变形状（共享节点会带动所有包含它的图形；平滑节点的手柄保持共线，按住 Alt 可单独移动一个）；拖动线条或填充可移动与之相连的所有内容。按住 Shift 可加选节点，在空白处拖动可框选节点，按方向键可微调节点。双击边线可添加节点，Delete 可删除节点，右键单击可将节点设为平滑或转角。动作路径的节点可用同样方式编辑（其端点保持不动）。
+	Click inside an outline to fill it (on the layer's lines), or on a fill to recolour it. The gap size closes small openings.	单击轮廓内部进行填充（作用于图层的线条），或单击填充重新着色。间隙大小可封闭小开口。
+	Click to add a colour stop	单击以添加色标
+	Click to change · right-click to remove	单击可更改 · 右键单击可移除
+	Click to place corner points, drag to pull smooth handles (Alt moves one handle). Click the first point to close; Enter, Esc or a click on the last point finishes. Backspace removes the last point. Alt-click a selected shape, a merged drawing's line or a motion path to add a point to it. Points snap to points and lines while Snap to Objects is on.	单击放置转角点，拖动可拉出平滑手柄（Alt 可单独移动一个手柄）。单击第一个点闭合路径；按 Enter、Esc 或单击最后一个点即可结束。Backspace 删除上一个点。按住 Alt 单击所选图形、合并绘制图形的线条或动作路径，可在其上添加点。开启“贴齐对象”后，点会贴齐到点和线条。
+	Click to select, drag to move, drag on empty space to marquee-select. Shift adds to the selection.	单击可选择，拖动可移动，在空白处拖动可框选。按住 Shift 可加选。
+	Click to type new text, or click text to edit it. Esc or a click elsewhere finishes. The options set the font, size and colour; double-click text with the Selection tool to edit it too.	单击以输入新文本，或单击已有文本进行编辑。按 Esc 或单击其他位置结束。选项可设置字体、大小和颜色；用选择工具双击文本也可进行编辑。
+	Click to zoom in, Alt-click to zoom out. Ctrl+wheel zooms anywhere.	单击放大，按住 Alt 单击缩小。Ctrl+滚轮可在任意位置缩放。
+	Close folder	关闭文件夹
+	Close large gaps	封闭大缺口
+	Close medium gaps	封闭中缺口
+	Close small gaps	封闭小缺口
+	Code in a scripting language (such as an Animate document's ActionScript), kept with the document. ActionScript 3.0 runs when it uses only timeline control, mouse listeners, trace and instance properties	以脚本语言编写的代码（如 Animate 文档中的 ActionScript），随文档一起保存。当 ActionScript 3.0 只使用时间轴控制、鼠标监听器、trace 和实例属性时即可运行
+	Collapse All Folders	折叠所有文件夹
+	Colour	颜色
+	Colour of the frames after the playhead	播放头之后帧的颜色
+	Colour of the frames before the playhead	播放头之前帧的颜色
+	Colour stop	色标
+	Colours	颜色
+	Command Palette…	命令面板…
+	Command palette	命令面板
+	Commands	命令
+	Confirmations	确认提示
+	Constrain rotation	约束旋转
+	Constrain shape / 45° line	约束形状 / 45° 直线
+	Context actions	上下文操作
+	Contrast	对比度
+	Control	控制
+	Convert Anchor Point	转换锚点
+	Convert Anchor Points	转换锚点
+	Convert Motion Path Point	转换动作路径点
+	Convert to Symbol	转换为元件
+	Convert to Symbol…	转换为元件…
+	Copy	拷贝
+	Copy Frames	拷贝帧
+	Copy on Multiple Frames	多帧拷贝
+	Corner radius	圆角半径
+	Corners	转角
+	Corners sharper than this are bevelled: how far a point may reach, in stroke widths	比这更尖锐的转角会呈斜角：点最多可延伸的距离，以描边宽度为单位
+	Could not open {name}: {e}	无法打开 {name}：{e}
+	Could not restore {name}: {error}	无法恢复 {name}：{error}
+	Could not save preferences: {e}	无法保存首选项：{e}
+	Create Classic Tween	创建传统补间
+	Create Motion Tween	创建动作补间
+	Create Shape Tween	创建形状补间
+	Create tween	创建补间
+	Current document	当前文档
+	Current frame	当前帧
+	Custom	自定义
+	Cut	剪切
+	Cut Frames	剪切帧
+	Cut on Multiple Frames	多帧剪切
+	Darken	变暗
+	Dash	虚线
+	Dash length	虚线长度
+	Dashed	虚线
+	Data font	数据字体
+	Date added	添加日期
+	Decision records (ADRs)	决策记录（ADR）
+	Default (bundled: {font})	默认（内置：{font}）
+	Default ({font})	默认（{font}）
+	Delete	删除
+	Delete Anchor Points	删除锚点
+	Delete Bone	删除骨骼
+	Delete Envelope Point	删除包络点
+	Delete Layer	删除图层
+	Delete Motion Path Points	删除动作路径点
+	Delete Point	删除点
+	Delete Points	删除点
+	Delete Scene	删除场景
+	Delete Sound	删除声音
+	Delete Switch Key	删除切换关键帧
+	Delete Unused Items	删除未使用项
+	Delete Unused Items…	删除未使用项…
+	Delete Width Point	删除宽度点
+	Delete layer	删除图层
+	Delete the active layer	删除当前图层
+	Delete this autosaved copy	删除此自动保存的副本
+	Delete this keyframe's script	删除此关键帧的脚本
+	Delete whole fills and lines	删除整个填充和线条
+	Deleted layer — {undo} to undo	已删除图层 — {undo} 可撤销
+	Deleted scene — {undo} to undo	已删除场景 — {undo} 可撤销
+	Deleted sound — {undo} to undo	已删除声音 — {undo} 可撤销
+	Deleted the fill. {undo} to undo.	已删除填充。{undo} 可撤销。
+	Deleted the line. {undo} to undo.	已删除线条。{undo} 可撤销。
+	Deletes the selected items and folders (Delete)	删除所选项目和文件夹（Delete）
+	Depth	深度
+	Descending: click for ascending	降序：单击切换为升序
+	Deselect All	取消全选
+	Desktop app (source)	桌面应用（源码）
+	Difference	差值
+	Discard	放弃
+	Discard Autosaved Document	放弃自动保存的文档
+	Discard {name}…	放弃 {name}…
+	Discarded the autosaved copy	已放弃自动保存的副本
+	Discarding deletes this work for good. This cannot be undone.	放弃将永久删除这份工作成果。此操作无法撤销。
+	Discard…	放弃…
+	Distance	距离
+	Distribute Horizontal Centers	水平居中分布
+	Distribute Vertical Centers	垂直居中分布
+	Document	文档
+	Document Info	文档信息
+	Document Settings	文档设置
+	Document class	文档类
+	Documents	文档
+	Don't Save	不保存
+	Don't ask again this session	本次会话内不再询问
+	Don't close gaps	不封闭缺口
+	Dot spacing	点间距
+	Dotted	点线
+	Drag	拖动
+	Drag Bone	拖动骨骼
+	Drag a corner or edge to scale (Shift keeps proportions, Alt scales from the centre), just outside a corner to rotate (Shift snaps 15°), inside to move.	拖动角点或边可缩放（Shift 保持比例，Alt 从中心缩放）；在角点外侧稍外拖动可旋转（Shift 吸附 15°）；在内部拖动可移动。
+	Drag a key up or down to change it, or a handle to shape the ease. Double-click to add a key.	上下拖动关键点可更改其值，拖动手柄可调整缓动形状。双击可添加关键点。
+	Drag bones or instances with the Selection tool to pose; a pose at another frame keys it, and poses tween.	使用选择工具拖动骨骼或实例来摆出姿势；在另一帧摆放姿势会为其创建关键帧，姿势之间会自动生成补间。
+	Drag from the centre to draw a star.	从中心向外拖动以绘制星形。
+	Drag on the stage to pan the camera, drag the round handle to turn it, and use the wheel to zoom (each drag is one undo step). Picking the tool adds a camera if the scene has none.	在舞台上拖动可平移摄像机，拖动圆形手柄可旋转摄像机，使用滚轮可缩放（每次拖动为一步撤销）。若场景中没有摄像机，选择此工具时会添加一台。
+	Drag to choose how many frames onion skin shows before and after the playhead	拖动以选择洋葱皮在播放头前后显示的帧数
+	Drag to choose the frames onion skin shows (anchored: they stay when the playhead moves)	拖动以选择洋葱皮显示的帧（已锚定：播放头移动时这些帧保持不变）
+	Drag to draw a line. Shift snaps to 45°.	拖动以绘制线条。Shift 吸附到 45°。
+	Drag to draw a rectangle. Shift draws a square.	拖动以绘制矩形。按住 Shift 可绘制正方形。
+	Drag to draw an oval. Shift draws a circle.	拖动以绘制椭圆形。按住 Shift 可绘制正圆形。
+	Drag to draw freehand. The options bar sets Smooth, Straighten or Ink.	拖动以徒手绘制。选项栏可设置平滑、伸直或墨水模式。
+	Drag to erase lines and fills drawn with Object Drawing off (drawing objects and symbols are kept). [ and ] change the size; the options set the shape and erase mode, and the Faucet deletes a whole fill or line with a click. Double-click the tool to erase everything on the stage.	拖动可擦除在未开启对象绘制时绘制的线条和填充（绘制对象和元件会保留）。按 [ 和 ] 可更改大小；选项可设置形状和擦除模式，水龙头单击即可删除整个填充或线条。双击工具可擦除舞台上的所有内容。
+	Drag to paint filled shapes in the fill colour (a click paints a dab). [ and ] change the size; the options set the shape, smoothing and paint mode.	拖动以填充颜色绘制填充图形（单击则涂出一小块）。按 [ 和 ] 可更改大小；选项可设置形状、平滑度和绘制模式。
+	Drag to pan the stage. Space works with any tool.	拖动以平移舞台。按住 Space 可配合任何工具使用。
+	Dragged points and selections snap to points, lines and fill edges within 10 pixels (the magnet under the tools)	拖动的点和选区在 10 像素范围内会吸附到点、线条和填充边缘（工具下方的磁铁）
+	Draw a stroke along the glyph edges	沿字形边缘绘制描边
+	Draw onion frames as outlines only	洋葱皮帧仅以轮廓显示
+	Drawing	绘制
+	Drawing on {adapter}, straight into the window.	在 {adapter} 上绘制，直接呈现到窗口。
+	Drawing on {adapter}, then copied to the window (slower: the window's graphics device can't be shared).	在 {adapter} 上绘制，再复制到窗口（较慢：无法共享窗口的图形设备）。
+	Drawing, image or sound	绘图、图像或声音
+	Draws the stage on the graphics card, and on the CPU when there is no card that can. The picture is the same either way.	在显卡上绘制舞台，没有可用显卡时则用 CPU 绘制。两种方式的画面完全相同。
+	Drop	放置
+	Drop Shadow	投影
+	Duplicate	制作副本
+	Duplicate Scene	制作场景副本
+	Duplicate Symbol	制作元件副本
+	Ease	缓动
+	Ease in (cubic)	缓入（三次）
+	Ease in (quad)	缓入（二次）
+	Ease in-out (cubic)	缓入缓出（三次）
+	Ease in-out (quad)	缓入缓出（二次）
+	Ease out (cubic)	缓出（三次）
+	Ease out (quad)	缓出（二次）
+	Easing	缓动
+	Edit	编辑
+	Edit Document	编辑文档
+	Edit Envelope — {name}	编辑包络 — {name}
+	Edit Envelope: the volume of each channel over the sound's time	编辑包络：声音播放期间每个声道的音量变化
+	Edit Motion Path	编辑动作路径
+	Edit Multiple Frames	编辑多帧
+	Edit Multiple Frames moves, transforms, aligns, deletes, copies and pastes artwork on several keyframes; for this, turn it off and work frame by frame.	编辑多帧可对多个关键帧上的图形进行移动、变形、对齐、删除、拷贝和粘贴；若要编辑单个帧，请关闭此功能并逐帧操作。
+	Edit Multiple Frames: the keyframes between the onion markers show at full strength. Select and drag artwork to move it on all of them; drag the markers on the frame ruler to choose the frames.	编辑多帧：洋葱皮标记之间的关键帧将以完整效果显示。选择并拖动图形可在所有这些帧上移动它；拖动帧标尺上的标记可选择帧范围。
+	Edit Multiple Frames: {first}–{last}	编辑多帧：{first}–{last}
+	Edit Symbol	编辑元件
+	Edit Symbols	编辑元件
+	Edit Text	编辑文本
+	Edit actions	编辑动作
+	Edit event	编辑事件
+	Edit script	编辑脚本
+	Edit sound envelope	编辑声音包络
+	Edit the property curves	编辑属性曲线
+	Edit the property curves and eases	编辑属性曲线和缓动
+	Edit what it does on clicks and the pointer ({key})	编辑其单击和指针交互时的行为（{key}）
+	Editing	编辑
+	Edits show immediately; heavy scenes render in the background with an outline preview.	编辑立即生效；复杂场景会在后台渲染，并以轮廓预览显示。
+	Edit…	编辑…
+	Effect	效果
+	Empty frame — press F7 for a blank keyframe	空帧 — 按 F7 可创建空白关键帧
+	Engine crates (source)	引擎 crate（源码）
+	Enter applies · Esc cancels · one undo step	Enter 应用 · Esc 取消 · 仅一步撤销
+	Enter confirms · Esc cancels	Enter 确认 · Esc 取消
+	Enter saves · Esc cancels	Enter 保存 · Esc 取消
+	Entry	条目
+	Entry point	入口点
+	Envelope Point	包络点
+	Erase	擦除
+	Erase Everything	擦除全部
+	Erase Everything…	擦除全部…
+	Erase Fills	擦除填充
+	Erase Inside	擦除内部
+	Erase Lines	擦除线条
+	Erase Normal	普通擦除
+	Erase Selected Fills	擦除所选填充
+	Erase mode	擦除模式
+	Erased. {undo} to undo.	已擦除。{undo} 可撤销。
+	Eraser	橡皮擦
+	Eraser size	橡皮擦大小
+	Eraser size ({keys})	橡皮擦大小（{keys}）
+	Eraser size {size} px	橡皮擦大小 {size} px
+	Erases fills only, leaving lines alone.	仅擦除填充，不影响线条。
+	Erases lines and fills on the layer.	擦除图层上的线条和填充。
+	Erases lines only, leaving fills alone.	仅擦除线条，不影响填充。
+	Erases only inside the fill where the stroke starts.	仅擦除描边起点所在填充的内部。
+	Erases only the selected fills.	仅擦除所选填充。
+	Esc cancels · click the red button to proceed	Esc 取消 · 点击红色按钮继续
+	Essentials	常用工具
+	Event	事件
+	Events	事件
+	Every	每个
+	Every edit renders before the next frame. Lowest latency; can stutter on very heavy scenes.	每次编辑都会在下一帧之前渲染。延迟最低；在非常复杂的场景中可能出现卡顿。
+	Every frame of the timeline	时间轴的每一帧
+	Every shortcut is back to the defaults.	所有快捷键已恢复为默认值。
+	Exit	退出
+	Expand All Folders	展开所有文件夹
+	Expansion	扩展量
+	Export	导出
+	Export Animated GIF…	导出动画 GIF…
+	Export Audio…	导出音频…
+	Export Frame as PNG…	导出帧为 PNG…
+	Export Frame as SVG…	导出帧为 SVG…
+	Export HTML Canvas…	导出 HTML Canvas…
+	Export HTML canvas (one web page)	导出 HTML canvas（单个网页）
+	Export Lottie Animation…	导出 Lottie 动画…
+	Export Lottie animation (JSON, for web and apps)	导出 Lottie 动画（JSON，用于网页和应用）
+	Export PNG Sequence…	导出 PNG 序列…
+	Export PNG sequence to folder	导出 PNG 序列到文件夹
+	Export Sprite Sheet…	导出精灵表…
+	Export Video…	导出视频…
+	Export animated GIF	导出动画 GIF
+	Export audio (the movie's soundtrack as a WAV)	导出音频（将影片的音轨保存为 WAV）
+	Export frame as PNG	导出帧为 PNG
+	Export frame as SVG	导出帧为 SVG
+	Export sprite sheet (PNG + JSON frame map)	导出精灵表（PNG + JSON 帧映射）
+	Export video (.webm or .mp4, made with your ffmpeg)	导出视频（.webm 或 .mp4，由你安装的 ffmpeg 生成）
+	Exported {path}	已导出 {path}
+	Exported {path} ({secs} s).	已导出 {path}（{secs} 秒）。
+	Exported {path} ({secs} s). No sounds play in that range, so the file is silent.	已导出 {path}（{secs} 秒）。该范围内没有任何声音播放，因此文件是静音的。
+	Extra start gap	额外起始间隙
+	Eyedropper	吸管
+	Fade by Distance	按距离淡出
+	Fade in	淡入
+	Fade left to right	从左向右淡出
+	Fade out	淡出
+	Fade right to left	从右向左淡出
+	Falls from full volume to silence while it plays	播放时从全音量渐弱至无声
+	Faucet	水龙头
+	File	文件
+	File dialogs	文件对话框
+	Files	文件
+	Fill	填充
+	Fill Colour	填充颜色
+	Fill colour	填充颜色
+	Fill on/off	填充开/关
+	Filled the area. {undo} to undo.	已填充该区域。{undo} 可撤销。
+	Filter blur	滤镜模糊
+	Filter by name or key…	按名称或按键筛选…
+	Filter colour	滤镜颜色
+	Filter fonts	筛选字体
+	Filter fonts…	筛选字体…
+	Filter offset	滤镜偏移
+	Filter options	滤镜选项
+	Filter quality	滤镜质量
+	Filter shortcuts	筛选快捷键
+	Filter strength	滤镜强度
+	Filter type	滤镜类型
+	Filters	滤镜
+	First frame	第一帧
+	Fit	适配
+	Fit Stage in Window	在窗口中适配舞台
+	Fit in Window	适配窗口
+	Fit in window	适配窗口
+	Fit stage in window	在窗口中适配舞台
+	Fits smooth curves to the stroke, keeping sharp corners.	为描边拟合平滑曲线，同时保留尖锐转角。
+	Flip Horizontal	水平翻转
+	Flip Vertical	垂直翻转
+	Folder	文件夹
+	Folders and guide layers don't run actions. Pick another layer in the timeline.	文件夹和引导层不会运行动作。请在时间轴中选择其他图层。
+	Folders hold layers, not frames. Hiding or locking the folder hides or locks everything in it; move layers in under it with Up and Down.	文件夹容纳的是图层，而不是帧。隐藏或锁定文件夹会同时隐藏或锁定其中的所有内容；使用“上移”和“下移”可将图层移入其下。
+	Follows the hand closely with little smoothing.	紧跟手的移动，几乎不做平滑。
+	Font	字体
+	Font size	字号
+	Font “{name}” is not installed; using the bundled font	字体“{name}”未安装；正在使用内置字体
+	Font: Hack (MIT, Bitstream Vera)	字体：Hack（MIT、Bitstream Vera）
+	Font: Noto Emoji (SIL OFL 1.1)	字体：Noto Emoji（SIL OFL 1.1）
+	Font: Ubuntu Light (Ubuntu Font Licence 1.0)	字体：Ubuntu Light（Ubuntu Font Licence 1.0）
+	Font: emoji-icon-font (MIT)	字体：emoji-icon-font（MIT）
+	Fonts	字体
+	Frame	帧
+	Frame Label	帧标签
+	Frame label	帧标签
+	Frame labels survive frames being added or moved	帧标签不会因帧的插入或移动而丢失
+	Frame number	帧编号
+	Frame rate	帧率
+	Frame rate, and the time the last picture took to draw	帧率，以及绘制最后一幅画面所用的时间
+	Frame script	帧脚本
+	Frame script set — {undo} to undo	已设置帧脚本 — {undo} 可撤销
+	Frame zoom	帧缩放
+	Frame zoom: frame width (Ctrl+wheel over the frames)	帧缩放：按帧宽度（在帧上按住 Ctrl 并滚动滚轮）
+	Frame {frame}	帧 {frame}
+	Frame {frame} is empty on this layer. Add a blank keyframe ({key}) to give it actions.	帧 {frame} 在此图层上为空。添加空白关键帧（{key}）即可为其添加动作。
+	Frame {frame} · point {anchor} of the motion path: drag to move the point	帧 {frame} · 运动路径上的点 {anchor}：拖动可移动该点
+	Frame {frame} · {seconds} s · X {x} Y {y} · {keys}	帧 {frame} · {seconds} 秒 · X {x} Y {y} · {keys}
+	Frames	帧
+	Frames farther from the playhead are fainter	距播放头越远的帧越淡
+	Frames here don't run (graphic and button timelines, guide layers); the script is kept with the document.	此处的帧不会运行（图形元件和按钮元件的时间轴、引导层）；脚本仍随文档保存。
+	Frames of {name}	{name} 的帧
+	Free Transform	任意变形
+	Full	全音量
+	Full volume on both channels	双声道均为全音量
+	GPU starting	GPU 正在启动
+	Gap length	间隙长度
+	Gap size	间隙大小
+	Give every property's segment at this frame this ease	将此缓动应用于该帧处每个属性的片段
+	Glow	发光
+	Glow options	发光选项
+	Go to	转到
+	Go to First Frame	转到第一帧
+	Go to Frame	转到帧
+	Go to Last Frame	转到最后一帧
+	Go to Scene	转到场景
+	Go to and play	转到并播放
+	Go to and stop	转到并停止
+	Gradient	渐变
+	Gradient Bevel	渐变斜角
+	Gradient Glow	渐变发光
+	Graphic	图形
+	Graphic: missing	图形：缺失
+	Graphic: {name}	图形：{name}
+	Graphics card (GPU)	显卡（GPU）
+	Graphite	石墨
+	Guide	引导
+	Guided	被引导
+	Hand	抓手
+	Hard Light	强光
+	Heard for {time} ({why}). Presets are shaped over this time; editing one makes it Custom.	声音可持续听到 {time}（{why}）。预设按此时长塑形；编辑某个预设后会变为自定义。
+	Help	帮助
+	Hide object	隐藏对象
+	High	高
+	High contrast	高对比度
+	Highlight	高亮
+	History	历史记录
+	Horizontal Center	水平居中
+	Hover a stroke to see its width points. Drag a point's handle to widen or narrow the stroke there (Alt: one side only), drag its dot to slide it along, or drag anywhere on the stroke to add a point. Click a point and press Delete to remove it.	悬停在描边上可查看其宽度点。拖动某个点的手柄可在该处加宽或收窄描边（按住 Alt：仅一侧生效），拖动其圆点可沿描边滑动，或在描边任意位置拖动以添加新点。单击某个点并按 Delete 即可将其删除。
+	How corners turn: sharp (Miter), rounded, or cut across (Bevel)	转角的处理方式：尖角（斜接）、圆角，或切平（斜角）
+	How far behind the stage this layer is: when the camera pans, a deeper layer moves less (parallax). Negative is in front.	该图层位于舞台后方多深处：摄像机平移时，越深的图层移动越少（视差）。负值表示位于舞台前方。
+	How much the stroke is smoothed: 0 follows the hand closely	描边的平滑程度：0 表示紧贴手的移动
+	How open ends finish: flat at the end (None), rounded, or squared off past it	开放端如何收尾：在端点处平齐（无）、圆头，或延伸超出端点的方头
+	How the stroke's width varies along it. Shape it by hand with the Width tool (U).	描边宽度沿描边的变化方式。可用宽度工具（U）手动塑形。
+	Hue	色相
+	Icons: Lucide (ISC)	图标：Lucide（ISC）
+	If AniCraft closes unexpectedly, the next start offers to restore it. Copies stay in the settings folder, never over your files, and go away when you save.	如果 AniCraft 意外关闭，下次启动时会询问是否恢复。副本保存在设置文件夹中，绝不会覆盖你的文件，保存后即会被清除。
+	If you don't save, your changes since the last save will be lost.	如果不保存，自上次保存以来的更改将全部丢失。
+	Image added to the Library	图像已添加到库
+	Immediate	立即
+	Import	导入
+	Import to Library…	导入到库…
+	Import to Stage…	导入到舞台…
+	Import to library (WAV, OGG or MP3 sound; PNG or JPEG image)	导入到库（WAV、OGG 或 MP3 声音；PNG 或 JPEG 图像）
+	Import to stage (SVG, PNG or JPEG; WAV, OGG or MP3 onto a new layer)	导入到舞台（SVG、PNG 或 JPEG；WAV、OGG 或 MP3 会放到新图层上）
+	Ink	墨水
+	Ink Bottle	墨水瓶
+	Inner	内侧
+	Insert	插入
+	Insert blank keyframe (F7)	插入空白关键帧（F7）
+	Insert frame (F5)	插入帧（F5）
+	Insert keyframe (F6)	插入关键帧（F6）
+	Inside and outside the edge	边缘内外两侧
+	Inside the artwork's edge	图稿边缘内侧
+	Install Plug-in…	安装插件…
+	Install plug-in (.wasm file)	安装插件（.wasm 文件）
+	Installed {name} {version} — find it in Commands › Plug-ins	已安装 {name} {version} — 可在“命令 › 插件”中找到
+	Instance	实例
+	Instance Name	实例名称
+	Instance name	实例名称
+	Inter + Hack (fallback)	Inter + Hack（后备）
+	Inter + JetBrains Mono (craft-fonts, {size} KB)	Inter + JetBrains Mono（craft-fonts，{size} KB）
+	Interface font	界面字体
+	Interface language	界面语言
+	Interface scale	界面缩放
+	Invert	反相
+	It is an independent project, not affiliated with or endorsed by Adobe. Bundled fonts and Rust crates keep their own permissive licences, listed below.	本项目为独立项目，与 Adobe 无任何关联，也未获其认可。内置字体与 Rust crate 保留各自原有的宽松许可，如下所列。
+	Italic	斜体
+	Its actions run on the timeline it is on: “this” is the main timeline.	它的动作运行在它所在的时间轴上：“this”即主时间轴。
+	Join	连接
+	Joint Limits	关节限制
+	Joint maximum angle	关节最大角度
+	Joint minimum angle	关节最小角度
+	Keep	保留
+	Keep a recovery copy of unsaved work	为未保存的工作保留恢复副本
+	Keep the markers on their frames instead of moving them with the playhead	让标记保留在原帧上，而不是随播放头移动
+	Keeps step with the timeline it is on (looping options below)	与其所在的时间轴保持同步（循环选项见下方）
+	Kept the autosaved work. File › Recover Autosaved Documents… brings it back.	已保留自动保存的工作。通过“文件 › 恢复自动保存的文档…”可将其找回。
+	Kept with the document as written. ActionScript 3.0 that controls the timeline runs in Test Movie and the HTML canvas export.	按原样随文档保留。控制时间轴的 ActionScript 3.0 会在测试影片和 HTML canvas 导出中运行。
+	Kept with the document, but outside the ActionScript 3.0 subset AniCraft runs (or on a timeline that doesn't run scripts). The first Output lines say why; the Actions panel shows each problem in place.	随文档保留，但超出了 AniCraft 所运行的 ActionScript 3.0 子集（或位于不运行脚本的时间轴上）。输出面板的开头几行说明了原因；“动作”面板会在相应位置标出每个问题。
+	Keyboard Shortcuts	键盘快捷键
+	Keyboard shortcuts (this editor)	键盘快捷键（此编辑器）
+	Keyframe	关键帧
+	Keyframe at {frame} · {frames} · {elements}	{frame} 处的关键帧 · {frames} · {elements}
+	Keyframes Only	仅关键帧
+	Kind	类型
+	Knockout	挖空
+	Label	标签
+	Language	语言
+	Last frame	最后一帧
+	Later	稍后
+	Later keeps them: File › Recover Autosaved Documents… brings this back.	选择“稍后”会保留它们：“文件 › 恢复自动保存的文档…”可将其找回
+	Layer	图层
+	Layer Depth	图层深度
+	Layer Effects	图层效果
+	Layer Opacity	图层不透明度
+	Layer Transform Key	图层变换关键帧
+	Layer Type	图层类型
+	Layer Volume	图层音量
+	Layer depth	图层深度
+	Layer names, menus and dialog text read like this.	图层名称、菜单和对话框文本会以此字体显示。
+	Layer volume	图层音量
+	Layers	图层
+	Layers and frames	图层和帧
+	Left	左
+	Left channel	左声道
+	Left channel volume	左声道音量
+	Legal compliance	法律合规
+	Length of each dash	每段短划线的长度
+	Length of each gap	每段间隔的长度
+	Letter spacing	字符间距
+	Letters	字母
+	Level	级别
+	Library	库
+	Library (top level)	库（顶层）
+	Library folder	库文件夹
+	Library name	库名称
+	Library options	库选项
+	Library: drop here for the top level	库：拖放到此处即为顶层
+	Licenses & Notices	许可证与声明
+	Lighten	变亮
+	Like Event, but not if the sound is already playing	类似“事件”，但声音已在播放时不会播放
+	Limit how far the joint turns, in every pose	在任何姿势下都限制关节的转动角度
+	Limits	限制
+	Line	线条
+	Line spacing	行距
+	Line {line}, column {column}: {message}	第 {line} 行，第 {column} 列：{message}
+	Linear	线性
+	Linear gradient	线性渐变
+	Lines	线条
+	Lines written	已写入行数
+	Linkage class	链接类
+	Linux / BSD	Linux / BSD
+	List Actions	列出动作
+	List Frame Scripts	列出帧脚本
+	List Library	列出库
+	Lock {name}	锁定 {name}
+	Lock/Unlock Layer	锁定/解锁图层
+	Loop	循环
+	Loop Playback	循环播放
+	Loop playback	循环播放
+	Looping	循环
+	Lottie animation	Lottie 动画
+	Low	低
+	MP3	MP3
+	Main timeline frame	主时间轴帧
+	Make Corner	转为角点
+	Make Smooth	转为平滑点
+	Manage Plug-ins…	管理插件…
+	Markers	标记
+	Mask	遮罩
+	Mask layer: its fills reveal the masked layers below. Lock it to hide its outline.	遮罩图层：其填充用于显露出下方被遮罩的图层。锁定它可隐藏其轮廓。
+	Masked	被遮罩
+	Medium	中
+	Menus, panels and dialogs. Your documents, layer names and the command line stay as they are.	菜单、面板和对话框。您的文档、图层名称和命令行保持原样。
+	Merge Shapes	合并形状
+	Merge on Multiple Frames	在多帧上合并
+	Message	消息
+	Middle-drag	中键拖动
+	Miter	斜接
+	Miter limit	斜接限制
+	Mode	模式
+	Modify	修改
+	Mono	单声道
+	More	更多
+	Morph this keyframe's shapes into the next keyframe's	将此关键帧的形状变形为下一关键帧的形状
+	Morphs one shape into another	将一个形状变形为另一个形状
+	Motion	动作
+	Motion Editor	动作编辑器
+	Motion Tween	动作补间
+	Motion path start X	动作路径起点 X
+	Motion path start Y	动作路径起点 Y
+	Motion tween	动作补间
+	Move	移动
+	Move Armature	移动骨架
+	Move Camera	移动摄像机
+	Move Envelope Point	移动封套点
+	Move Handle	移动手柄
+	Move Keyframes	移动关键帧
+	Move Layer Down	下移图层
+	Move Layer Up	上移图层
+	Move Motion Path	移动动作路径
+	Move Point	移动点
+	Move Points	移动多个点
+	Move Scene Earlier	将场景前移
+	Move Scene Later	将场景后移
+	Move Shape Hint	移动形状提示
+	Move colour stop	移动色标
+	Move down	下移
+	Move layer down	下移图层
+	Move layer up	上移图层
+	Move on Multiple Frames	在多帧上移动
+	Move the playhead between frames {first} and {last}, where the object moves along the path	在帧 {first} 与帧 {last} 之间移动播放头，对象会沿路径移动
+	Move to	移动到
+	Move to Folder	移动到文件夹
+	Move up	上移
+	Moves from the left channel to the right while it plays	播放时从左声道移动到右声道
+	Moves from the right channel to the left while it plays	播放时从右声道移动到左声道
+	Moves, scales, rotates and recolours	可移动、缩放、旋转和重新着色
+	Movie clip	影片剪辑
+	Movie clip (unnamed)	影片剪辑（未命名）
+	Movie clip “{name}”	影片剪辑“{name}”
+	Movie clip: {name}	影片剪辑：{name}
+	Moving the object on the stage inside the span adds keys here	在该时间跨度内移动舞台上的对象会在此处添加关键帧
+	Multiply	正片叠底
+	Mute	静音
+	Mute layer	静音图层
+	Mute this layer's sounds (in playback and every export)	静音此图层的声音（播放和所有导出时均生效）
+	Mute {name}	静音 {name}
+	Mute/Unmute Layer	静音/取消静音图层
+	NOTICE	声明
+	Name	名称
+	Name it to address it from actions (letters, digits and _). Its events work without a name.	为其命名以便在动作中引用（限字母、数字和 _）。即使不命名，其事件也能正常工作。
+	Never saved	从未保存
+	New	新建
+	New Folder	新建文件夹
+	New Layer	新建图层
+	New Text	新建文本
+	New document	新建文档
+	New folder above the active layer (move layers in under it with Up and Down)	在活动图层上方新建文件夹（用“上移”和“下移”将图层移入其中）
+	New from Sample	从示例新建
+	New layer	新建图层
+	Next Frame	下一帧
+	Next Panel	下一面板
+	Next Scene	下一场景
+	Next frame	下一帧
+	Next scene	下一场景
+	No actions yet. Add one: Stop on a frame holds the movie there; a button's Click can then go on.	还没有任何动作。可以添加一个：帧上的 Stop 会让影片停在该帧；随后按钮的 Click 可以继续播放。
+	No autosaved work to recover	没有可恢复的自动保存工作
+	No fonts found on this computer	这台电脑上没有找到字体
+	No frame labels yet: name a keyframe in Properties › Label	还没有帧标签：在“属性 › 标签”中为关键帧命名
+	No frame-script plug-ins are installed (Commands › Install Plug-in…)	尚未安装帧脚本插件（“命令 › 安装插件…”）
+	No matching commands	没有匹配的命令
+	No panel to move to yet	尚无可切换到的面板
+	No plug-ins installed yet	尚未安装任何插件
+	No plug-ins installed yet. Plug-ins are WebAssembly (.wasm) files that add commands, such as generators and selection effects.	尚未安装任何插件。插件是 WebAssembly (.wasm) 文件，可添加诸如生成器和选区效果之类的命令。
+	No property keyframes yet: move or change the object at a later frame to add some.	还没有属性关键帧：在后面的帧移动或更改对象即可添加。
+	No sound: {error}	无声音：{error}
+	No symbols, images or sounds yet. Select artwork and press {convert} to make a symbol, or import an image or a sound with {import}.	还没有元件、图像或声音。选中图稿并按 {convert} 即可制作元件，或用 {import} 导入图像或声音。
+	Noise	噪点
+	Noise amount	噪点数量
+	None	无
+	Normal	正常
+	Nothing erased: {why}. The eraser works on lines and fills drawn with Object Drawing off; drawing objects and symbols are kept.	未擦除任何内容：{why}。橡皮擦只作用于在关闭“对象绘制”时绘制的线条和填充；绘制对象和元件会保留。
+	Nothing to erase: the visible, unlocked layers are empty at this frame.	没有可擦除的内容：可见且未锁定的图层在此帧上为空。
+	Nothing to paint behind there: Paint Behind only paints empty areas.	该处没有可在其后方绘制的内容：“在后方绘制”只绘制空白区域。
+	Nudge selection 1 px	将选区微移 1 像素
+	Nudge selection 10 px	将选区微移 10 像素
+	OK	确定
+	Object Drawing	对象绘制
+	Object drawing	对象绘制
+	Offset	偏移
+	Ogg Vorbis	Ogg Vorbis
+	On an armature: drag from one symbol instance to another to join them with a bone; start on a bone's end to continue the chain, click a bone to select it, pose by dragging with the Selection tool. On a Moho bone rig: drag to draw bones, drag a tip ring to aim its IK chain.	在骨架上：从一个元件实例拖动到另一个实例，即可用骨骼将它们连接起来；从骨骼末端开始拖动可延续骨骼链；单击骨骼可将其选中；用“选择”工具拖动即可摆出姿势。在 Moho 骨骼绑定上：拖动可绘制骨骼，拖动末端圆环可调整其逆运动学链的指向。
+	On click	单击时
+	On pointer out	指针移出时
+	On pointer over	指针悬停时
+	On press	按下时
+	On release	释放时
+	On: a click deletes the whole fill or line under it. Off: drag to erase	开启：单击会删除其下方的整个填充或线条。关闭：拖动擦除
+	On: each shape is an object of its own. Off: shapes cut and merge with the shapes they touch ({key})	开启：每个形状都是独立的对象。关闭：形状会裁切并与接触到的形状合并（{key}）
+	Onion All	全部洋葱皮
+	Onion Skin	洋葱皮
+	Onion Skin On / Off	洋葱皮开 / 关
+	Onion Skin Options	洋葱皮选项
+	Onion end marker	洋葱皮结束标记
+	Onion skin	洋葱皮
+	Onion skin options	洋葱皮选项
+	Onion skin options: markers, outlines, colours	洋葱皮选项：标记、轮廓、颜色
+	Onion start marker	洋葱皮起始标记
+	Onion {n}	洋葱 {n}
+	Onion-skin only the frames where a keyframe starts	仅对关键帧起始的帧应用洋葱皮
+	Open	打开
+	Open document	打开文档
+	Open folder	打开文件夹
+	Open it as unsaved work	将其作为未保存的工作打开
+	Open {label}	打开 {label}
+	Open {name}	打开 {name}
+	Open-source 2D vector animation studio, written in Rust.	开源的 2D 矢量动画工作室，用 Rust 编写。
+	Opened	已打开
+	Opened document	已打开文档
+	Opened in your system's file viewer	已在系统的文件查看器中打开
+	Opened the plug-ins folder	已打开插件文件夹
+	Open…	打开…
+	Options	选项
+	Or after	或之后
+	Orient to Path	沿路径定向
+	Orient to path	沿路径定向
+	Other	其他
+	Other language	其他语言
+	Outer	外侧
+	Outline	轮廓
+	Outline Layer	轮廓图层
+	Outline {name}	轮廓 {name}
+	Outlines	轮廓
+	Output	输出
+	Outside the artwork's edge	在图形边缘之外
+	Oval	椭圆
+	Overlay	叠加
+	PNG image	PNG 图像
+	PNG sprite sheet	PNG 精灵图集
+	Paint Behind	背后绘制
+	Paint Bucket	油漆桶
+	Paint Fills	绘制填充
+	Paint Normal	正常绘制
+	Paint mode	绘制模式
+	Paints only empty areas, behind the lines and fills on the layer.	仅绘制空白区域，并位于图层上线条和填充的后面。
+	Paints over fills and empty areas, leaving lines alone.	在填充和空白区域上绘制，不改动线条。
+	Paints over lines and fills on the layer.	在图层上的线条和填充上绘制。
+	Pan with any tool	用任意工具平移视图
+	Panels are docked: Tools, Stage, Timeline, Properties, Library	面板已停靠：工具、舞台、时间轴、属性、库
+	Paste Frames	粘贴帧
+	Paste in Center	粘贴到中心
+	Paste in Place	原位粘贴
+	Paste in Place on Multiple Frames	在多个帧上原位粘贴
+	Path	路径
+	Path start	路径起点
+	Pause	暂停
+	Pen	钢笔
+	Pen Path	钢笔路径
+	Pencil	铅笔
+	Pencil Stroke	铅笔描边
+	Performance & budgets	性能与预算
+	Physics	物理
+	Physics Info	物理信息
+	Pick a key that has another key after it	请选择一个后面还有其他关键帧的关键帧
+	Picked the bitmap fill.	已选取位图填充。
+	Picked the fill {color}.	已选取填充 {color}。
+	Picked the line {color}, {width} px.	已选取线条 {color}，{width} 像素。
+	Picked the linear gradient.	已选取线性渐变。
+	Picked the radial gradient.	已选取径向渐变。
+	Picked with the Eyedropper. It stays where it was on the stage (lock fill). Pick a colour to fill with a solid colour again.	已用吸管选取。填充保持在舞台上原来的位置（锁定填充）。重新选取一种颜色即可恢复纯色填充。
+	Picked {color} into the fill colour.	已将 {color} 选取为填充颜色。
+	Picked {color} into the stroke colour.	已将 {color} 选取为描边颜色。
+	Pin	固定
+	Pin Bone	固定骨骼
+	Pin Here	固定到此处
+	Pin Motion Path Point	固定运动路径点
+	Pin the motion path at this frame	在此帧固定运动路径
+	Pin to Frame {frame}	固定到帧 {frame}
+	Pinch	捏合
+	Pinned	已固定
+	Pinned point {anchor} to frame {frame}: the object passes it then. {undo} to undo.	已将点 {anchor} 固定到帧 {frame}：对象将在那一刻经过该点。{undo} 可撤销。
+	Pinned to Frame {frame}	已固定到帧 {frame}
+	Pixelate	像素化
+	Pixelate size	像素化大小
+	Place Sound	放置声音
+	Place on Stage	放置到舞台
+	Place on Timeline	放置到时间轴
+	Place on stage	放置到舞台
+	Place on timeline	放置到时间轴
+	Place on {layer}	放置到 {layer}
+	Play	播放
+	Play / Stop	播放 / 停止
+	Play once	播放一次
+	Play the sound	播放声音
+	Play the sound with this envelope	以此包络播放声音
+	Playback Frame Range	播放帧范围
+	Playhead (frame ruler)	播放头（帧标尺）
+	Playing without sound: {e}	播放时没有声音：{e}
+	Plays again and again: to the end of the movie (event) or of this span (stream)	反复播放：到影片末尾（事件）或本段末尾（流）
+	Plays in full from this keyframe, independent of the timeline	从该关键帧起完整播放，与时间轴无关
+	Plays its own timeline on a loop, from when it appears	从出现时起循环播放自身的时间轴
+	Plays on the left channel only	仅在左声道播放
+	Plays on the right channel only	仅在右声道播放
+	Plays the sound on its own	单独播放该声音
+	Plug-in	插件
+	Plug-in · {by}	插件 · {by}
+	Plug-ins	插件
+	Plug-ins are installed into a folder on your computer: use the desktop app	插件安装在你电脑上的文件夹中：请使用桌面应用
+	Plug-ins run sandboxed: they can change the open document through AniCraft's commands, never your files.	插件在沙箱中运行：它们只能通过 AniCraft 的命令修改打开的文档，绝不会修改你的文件。
+	Plug-ins: {error}	插件：{error}
+	Point time	点时间
+	Point {anchor} is pinned to frame {frame}: pins keep the path's order	点 {anchor} 已固定到帧 {frame}：固定点会保持路径的顺序
+	Point {anchor} shapes the path only again; the X and Y keyframes of frame {frame} go	点 {anchor} 恢复为仅塑造路径形状；帧 {frame} 的 X 和 Y 关键帧已移除
+	Point {index} of {count}	第 {index} 个点，共 {count} 个
+	Point {index} of {count}, {channel}: {level} % at {time}	第 {index} 个点，共 {count} 个，{channel}：在 {time} 处为 {level} %
+	Pointer out	指针移出
+	Pointer over	指针悬停
+	Points	点
+	Points of the motion path pinned to frames: the object passes each one exactly then, and the X and Y keyframes there are its place. The ends are always pinned. Moving the object on the stage at a frame pins a point there; with the Subselection tool (A), right-click a point to pin or unpin it.	运动路径上固定到帧的点：对象恰好在那一刻经过每个点，该处的 X 和 Y 关键帧就是它的位置。两端始终固定。在某一帧于舞台上移动对象即可在该处固定一个点；使用部分选取工具（A）右键点击某个点即可固定或取消固定。
+	PolyStar	多角星形
+	Pose Armature	调整骨架姿势
+	Pose Bone	调整骨骼姿势
+	Pose Bones	调整多根骨骼的姿势
+	Position	位置
+	Position X	位置 X
+	Position Y	位置 Y
+	Preferences	首选项
+	Preferences…	首选项…
+	Press	按下
+	Press keys…	请按下按键…
+	Press the new keys for {action}. Esc cancels.	为 {action} 按下新的按键。按 Esc 可取消。
+	Pressed and released on it	在其上按下并松开
+	Preview	预览
+	Preview Through Camera	通过摄像机预览
+	Preview on the stage	在舞台上预览
+	Preview through camera	通过摄像机预览
+	Preview through camera is on; add a camera (the camera button on the timeline, or the Camera tool) to look through it.	通过摄像机预览已开启；请添加一台摄像机（时间轴上的摄像机按钮，或摄像机工具）以透过它查看。
+	Previewing through the camera: artwork edits are paused. Turn off View › Preview Through Camera to edit.	正在通过摄像机预览：图形编辑已暂停。关闭“视图 › 通过摄像机预览”即可进行编辑。
+	Previous Frame	上一帧
+	Previous Panel	上一面板
+	Previous Scene	上一场景
+	Previous frame	上一帧
+	Previous scene	上一场景
+	Project Files	项目文件
+	Project Files & Docs	项目文件与文档
+	Project Files & Docs…	项目文件与文档…
+	Project folder	项目文件夹
+	Properties	属性
+	Property	属性
+	Property Ease	属性缓动
+	Property Keyframe	属性关键帧
+	Property curves of the motion tween at the playhead (double-click a motion span)	播放头处动作补间的属性曲线（双击动作补间段）
+	Property ease	属性缓动
+	Property keyframe	属性关键帧
+	Put every shortcut back to the defaults	将所有快捷键恢复为默认设置
+	Put on {layer} at frame {frame}	放到 {layer} 的帧 {frame} 上
+	Puts it on the active layer's keyframe at the playhead (Enter, or drag it onto the stage)	将其放到播放头处活动图层的关键帧上（按 Enter，或将其拖到舞台上）
+	Quality	质量
+	Quit	退出
+	Quit AniCraft	退出 AniCraft
+	Radial gradient	径向渐变
+	Raw Points	原始点
+	Read times in frames	以帧为单位读取时间
+	Read times in seconds	以秒为单位读取时间
+	Reading the sound…	正在读取声音…
+	Recoloured the fill. {undo} to undo.	已更改填充颜色。{undo} 可撤销。
+	Recover Autosaved Documents…	恢复自动保存的文档…
+	Recover unsaved work	恢复未保存的工作
+	Rectangle	矩形
+	Redid {action}	已重做 {action}
+	Redo	重做
+	Reflected gradient	镜像渐变
+	Release	松开
+	Reload	重新加载
+	Reload Plug-ins	重新加载插件
+	Remove	移除
+	Remove All Hints	移除所有提示
+	Remove Bone	移除骨骼
+	Remove Camera	移除摄像机
+	Remove Frame	移除帧
+	Remove Hint {letter}	移除提示 {letter}
+	Remove Motion Path	移除运动路径
+	Remove Plug-in	移除插件
+	Remove Property Keyframe	移除属性关键帧
+	Remove Shape Hint	移除形状提示
+	Remove Sound	移除声音
+	Remove Timeline Marker	移除时间轴标记
+	Remove Transform	移除变形
+	Remove Tween	移除补间
+	Remove bone	移除骨骼
+	Remove camera	移除摄像机
+	Remove colour stop	移除色标
+	Remove event	移除事件
+	Remove filter	移除滤镜
+	Remove script	移除脚本
+	Remove the {property} keyframe at frame {frame}	移除第 {frame} 帧的 {property} 关键帧
+	Remove this action	移除此动作
+	Remove this colour stop	移除此色标
+	Remove this filter	移除此滤镜
+	Remove tween	移除补间
+	Remove {filter}	移除 {filter}
+	Remove {filter} colour stop	移除 {filter} 色标
+	Removed frame — {undo} to undo	已移除帧 — {undo} 撤销
+	Removed shape hint {letter}. {undo} to undo.	已移除形状提示 {letter}。{undo} 撤销。
+	Removed the actions — {undo} to undo	已移除动作 — {undo} 撤销
+	Removed the click event — {undo} to undo	已移除单击事件 — {undo} 撤销
+	Removed the plug-in	已移除插件
+	Removed the plug-in frame script — {undo} to undo	已移除插件帧脚本 — {undo} 撤销
+	Removed the pointer out event — {undo} to undo	已移除指针移出事件 — {undo} 撤销
+	Removed the pointer over event — {undo} to undo	已移除指针悬停事件 — {undo} 撤销
+	Removed the press event — {undo} to undo	已移除按下事件 — {undo} 撤销
+	Removed the release event — {undo} to undo	已移除释放事件 — {undo} 撤销
+	Removed the script — {undo} to undo	已移除脚本 — {undo} 撤销
+	Removed the width point. {undo} to undo.	已移除宽度点。{undo} 撤销。
+	Removed {name}	已移除 {name}
+	Removes the bone and the bones below it; their instances stay where they are, on a layer of their own	移除该骨骼及其下方的骨骼；它们的实例保持原位，并放置在单独的图层上
+	Remove…	移除…
+	Rename	重命名
+	Rename Layer	重命名图层
+	Rename Scene	重命名场景
+	Rename Sound	重命名声音
+	Rename layer	重命名图层
+	Rename scene	重命名场景
+	Renderer	渲染器
+	Rendering	渲染
+	Repeat	重复
+	Repeat or loop	重复或循环
+	Requirements & technology	需求与技术
+	Reset	重置
+	Reset Camera	重置摄像机
+	Reset all	全部重置
+	Reset all…	全部重置…
+	Reset camera	重置摄像机
+	Reset {action}	重置 {action}
+	Resize the right-hand panels	调整右侧面板大小
+	Resize the timeline	调整时间轴大小
+	Restart from frame 1 with the document as it is now ({key})	以文档当前状态从第 1 帧重新开始（{key}）
+	Restore	恢复
+	Restore Autosaved Document	恢复自动保存的文档
+	Restore {name}	恢复 {name}
+	Restored “{name}” as a new document (the file on disk is newer). Save to keep it.	已将“{name}”恢复为新文档（磁盘上的文件较新）。请保存以保留它。
+	Restored “{name}”. It isn't saved yet: Save to keep it.	已恢复“{name}”。该文档尚未保存：请保存以保留它。
+	Right	右
+	Right channel	右声道
+	Right channel volume	右声道音量
+	Right-click	右键单击
+	Rises from silence to full volume while it plays	播放时从静音逐渐升至全音量
+	Roadmap	路线图
+	Rotate	旋转
+	Rotate 90° CCW	逆时针旋转 90°
+	Rotate 90° CW	顺时针旋转 90°
+	Rotate Camera	旋转摄像机
+	Rotation	旋转
+	Round	圆角
+	Roundness	圆角半径
+	Run	运行
+	Run Plug-in	运行插件
+	Runs in Test Movie and the HTML canvas export	在测试影片和 HTML canvas 导出中运行
+	Run…	运行…
+	Rust crates: licence inventory	Rust crates：许可证清单
+	SVG image	SVG 图像
+	Safety	安全
+	Same for all	全部相同
+	Saturation	饱和度
+	Save	保存
+	Save As…	另存为…
+	Save changes to “{name}” before closing?	关闭前保存对“{name}”的更改吗？
+	Save document as	将文档保存为
+	Saved documents and exports go where you type in the save box; a plain name lands in the folder AniCraft was started from.	保存的文档和导出文件会存到保存框中输入的位置；若只输入名称，则会保存到启动 AniCraft 时所在的文件夹中。
+	Saved {path}	已保存 {path}
+	Saved {path} to your downloads	已将 {path} 保存到下载文件夹
+	Scale	缩放
+	Scale X	X 缩放
+	Scale Y	Y 缩放
+	Scale height	缩放高度
+	Scale width	缩放宽度
+	Scanning installed fonts…	正在扫描已安装的字体…
+	Scene	场景
+	Screen	滤色
+	Screenshots	截图
+	Script	脚本
+	Script language	脚本语言
+	Scroll the timeline	滚动时间轴
+	Scroll the timeline (or Shift+wheel anywhere over it)	滚动时间轴（或在时间轴上方任意位置使用 Shift+滚轮）
+	Search	搜索
+	Search the Library	搜索库
+	Seconds	秒
+	Select All	全选
+	Select All Frames	选择所有帧
+	Select Connected	选择相连项
+	Select Elements	选择元素
+	Select Layer	选择图层
+	Select Parts	选择部件
+	Select Unused Items	选择未使用的项目
+	Select a keyframe with a sound to edit its envelope	选择带有声音的关键帧以编辑其包络
+	Select an item to preview it	选择一个项目即可预览
+	Select at Point	在点处选择
+	Select one button or movie clip instance on the stage	在舞台上选择一个按钮或影片剪辑实例
+	Select one button or movie clip instance on the stage to give it events (a graphic can't have them: set its symbol's Type in Properties).	在舞台上选择一个按钮或影片剪辑实例来为其设置事件（图形元件不能拥有事件：请在属性中设置其元件的类型）。
+	Select some artwork first	请先选择一些图形
+	Select the object to see its path on the stage. Drag the path to bend it and its ends to move them; {drag} the path or the object to move the whole path. With the Subselection tool (A), drag points and handles, double-click the path to add a point (or Alt-click it with the Pen), Delete removes points, and right-click makes them smooth or corners.	选择对象即可在舞台上看到其路径。拖动路径可使其弯曲，拖动端点可移动端点；{drag} 路径或对象可移动整条路径。使用部分选取工具（A）可拖动点和手柄，双击路径可添加点（也可用钢笔工具按住 Alt 单击路径），按 Delete 可删除点，右键单击可将点设为平滑点或角点。
+	Selection	选择
+	Selection Tool Target	选择工具目标
+	Send Backward	后移一层
+	Send to Back	置于底层
+	Set Actions	设置动作
+	Set Frame Script	设置帧脚本
+	Set Script Class	设置脚本类
+	Set Tween Easing	设置补间缓动
+	Set property	设置属性
+	Settings	设置
+	Settings…	设置…
+	Shadow	投影
+	Shadow expansion	投影扩展
+	Shadow noise	投影噪点
+	Shadow offset	投影偏移
+	Shadow options	投影选项
+	Shape	形状
+	Shape Hints	形状提示
+	Shape tween	形状补间
+	Show Folder	显示文件夹
+	Show all again	重新显示全部
+	Show another bitmap from the Library here, keeping its position and transform	在此处显示库中的另一张位图，并保留其位置和变换
+	Show another symbol here, keeping position, colour effect, filters and name	在此处显示另一个元件，并保留位置、颜色效果、滤镜和名称
+	Show only the effect, not the artwork	仅显示效果，不显示图形
+	Show the keyframes between the markers at full strength, and select and move their artwork together	以全强度显示标记之间的关键帧，并可将它们的图形一起选择和移动
+	Show the markers on the frame ruler even when onion skin is off	即使关闭洋葱皮，也在帧标尺上显示标记
+	Show the stage as the movie shows it (View › Preview Through Camera)	按影片的显示方式显示舞台（视图 › 通过摄像机预览）
+	Show the whole sound	显示整个声音
+	Show this line in the script	在脚本中显示此行
+	Show {name}	显示 {name}
+	Show/Hide Layer	显示/隐藏图层
+	Shown	已显示
+	Shows its Up frame	显示其弹起帧
+	Silence this layer's sounds while you work and in every export	在编辑过程中及所有导出中静音此图层的声音
+	Single frame	单帧
+	Size	大小
+	Skew	倾斜
+	Smooth	平滑
+	Smooth (bezier)	平滑（贝塞尔）
+	Smooth when scaled or turned; off keeps hard pixel edges, for pixel art	缩放或旋转时平滑；关闭则保留生硬的像素边缘，适合像素画
+	Smoothing	平滑度
+	Snap Point	贴齐点
+	Snap to Objects	贴齐对象
+	Snap to objects	贴齐对象
+	Snapping	贴齐
+	Solid	实线
+	Solid, dashed or dotted	实线、虚线或点线
+	Some plug-ins could not be loaded: {list}	部分插件无法加载：{list}
+	Sort	排序
+	Sort by	排序依据
+	Sound	声音
+	Sound Settings	声音设置
+	Sound effect	音效
+	Sound or image	声音或图像
+	Sound repeat	声音重复
+	Sound sync	声音同步
+	Sound · {seconds} s	声音 · {seconds} 秒
+	Space between the dots	点之间的间距
+	Spacing	间距
+	Square	方形
+	Stage	舞台
+	Stage Rendering	舞台渲染
+	Stage colour	舞台颜色
+	Stage height	舞台高度
+	Stage size	舞台大小
+	Stage width	舞台宽度
+	Stage · previewing through the camera · {tool} tool · frame {frame}	舞台 · 正通过摄像机预览 · {tool} 工具 · 第 {frame} 帧
+	Stage · {tool} tool · frame {frame}	舞台 · {tool} 工具 · 第 {frame} 帧
+	Star points	星形角数
+	Start	开始
+	Start a bone on a symbol instance (convert artwork with F8), then drag to the instance it moves.	在元件实例上创建骨骼（按 F8 转换图形），然后拖动到它将移动的实例上。
+	Starting the graphics card…	正在启动显卡…
+	Step one frame	前进一帧
+	Stereo	立体声
+	Stop	停止
+	Stop colour (this stop stays transparent)	色标颜色（此色标保持透明）
+	Stop the preview	停止预览
+	Stops this sound	停止此声音
+	Straight	直线
+	Straighten	伸直
+	Straighten Path	伸直路径
+	Straighten motion path	伸直运动路径
+	Stream	数据流
+	Strength	强度
+	Stroke	描边
+	Stroke Style	描边样式
+	Stroke cap	描边端点
+	Stroke colour	描边颜色
+	Stroke join	描边连接
+	Stroke on/off	描边开/关
+	Stroke style	描边样式
+	Stroke width	描边宽度
+	Stroke width profile	描边宽度轮廓
+	Style	样式
+	Subselect	部分选取
+	Subselect Rectangle	部分选取矩形
+	Subselection	部分选取
+	Subtract	减去
+	Swap Bitmap	替换位图
+	Swap Symbol	替换元件
+	Swap…	替换…
+	Switch	切换
+	Switch Info	切换信息
+	Switch Variant	切换变体
+	Symbol	元件
+	Symbol Type	元件类型
+	Symbol name	元件名称
+	Symbol type	元件类型
+	Sync	同步
+	System language ({name})	系统语言（{name}）
+	Taper both ends	两端变细
+	Taper end	终点变细
+	Taper start	起点变细
+	Target	目标
+	Test Movie	测试影片
+	Test Movie — {name}	测试影片 — {name}
+	Text	文本
+	Text alignment	文本对齐
+	Text colour	文本颜色
+	Text on the stage	舞台上的文本
+	Text stroke	文本描边
+	Text width	文本宽度
+	Text: {text}	文本：{text}
+	That autosaved copy is gone	该自动保存的副本已丢失
+	That bone is pinned (or hangs from a pinned bone): unpin it in Properties to drag it.	该骨骼已固定（或挂在已固定的骨骼上）：请先在属性中解除固定，再进行拖动。
+	The GPU stage drew a picture the window can't show.	GPU 舞台绘制的画面无法在此窗口中显示。
+	The Library folder the new symbol goes into (the next conversion offers it again)	新元件将存入的库文件夹（下次转换时会再次提供该文件夹）
+	The camera layer is hidden: the movie shows the stage as it is.	摄像机图层已隐藏：影片将按舞台原样显示。
+	The class scripts create this symbol by (its linkage), extending {base}. Kept with the document; scripts don't run yet	类脚本以（其链接）创建此元件，并扩展 {base}。随文档保存；脚本尚未运行
+	The class scripts create this symbol by (its linkage). Kept with the document; scripts don't run yet	类脚本以（其链接）创建此元件。随文档保存；脚本尚未运行
+	The class scripts run the main timeline as (the document class). Kept with the document; scripts don't run yet	类脚本以（文档类）运行主时间轴。随文档保存；脚本尚未运行
+	The data font shows numbers, timecode, rulers and shortcuts; only monospaced families are listed so digits stay aligned.	数据字体用于显示数字、时间码、标尺和快捷键；为确保数字对齐，仅列出等宽字体。
+	The direction the shadow falls (the light comes from the opposite side)	阴影落下的方向（光线来自相反一侧）
+	The ends of a motion path are always pinned, to the first and last position keys	运动路径的两个端点始终固定在第一个和最后一个位置关键帧上
+	The ends of a motion path are where the motion starts and ends: drag them to move them	运动路径的端点是运动的起点和终点：拖动即可移动它们
+	The file was saved after this copy, so it opens as a new document and Save asks for a name.	文件在此副本之后又保存过，因此它会作为新文档打开，保存时会要求输入名称。
+	The graphics card can't draw the stage, so the CPU does: {why}	显卡无法绘制舞台，因此由 CPU 代劳：{why}
+	The joint's turn from where the bone was drawn, measured from the bone it hangs from	关节相对于骨骼绘制位置的旋转，以其所挂的骨骼为基准
+	The movie shows what the frame on the stage shows. Layer depth (in Frame, per layer) moves far layers less.	影片显示的内容与舞台上的帧一致。图层景深（位于“帧”中，按图层设置）会让较远的图层移动得更少。
+	The movie: point and click its buttons	影片：可指向并点击其中的按钮
+	The name actions use to address it (letters, digits and _)	动作用来引用它的名称（字母、数字和 _）
+	The object doesn't move yet	对象尚未移动
+	The object passes this point exactly on frame {frame}	对象恰好在第 {frame} 帧经过此点
+	The object stays as it is on the span's first frame	对象保持它在区段第一帧上的状态
+	The object stays as it is on the span's first frame ({undo} to undo)	对象保持它在区段第一帧上的状态（按 {undo} 可撤销）
+	The playhead is on an empty frame of this layer.	播放头位于此图层的空白帧上。
+	The plug-in runs each time the playhead enters this keyframe, reads where the movie is, and sends actions back. It can't change the document.	插件会在播放头每次进入此关键帧时运行，读取影片当前的状态并回传动作。它不能更改文档。
+	The plug-in “{id}” is no longer installed	插件“{id}”已不再安装
+	The point shapes the path only; its frame's X and Y keyframes go	该点仅用于塑造路径；其所在帧的 X 和 Y 关键帧将被移除
+	The pointer comes up over it	指针在其上方松开
+	The pointer goes down on it	指针在其上按下
+	The pointer moves off it	指针从其上移开
+	The pointer moves onto it	指针移到其上
+	The reference renderer: slower on large stages. Exports always use it.	参考渲染器：在大型舞台上较慢。导出时始终使用它。
+	The selected elements differ here; it shows the first one's. A change applies to all of them	所选元素在此处的设置不同，显示的是第一个元素的设置；修改将应用于所有所选元素
+	The standard dark look: graphite panels, colour where it means something.	标准深色外观：石墨色面板，颜色只用在有意义之处。
+	The timeline always leaves room before frame 1 for the playhead; this adds more. It stays the same at every zoom.	时间轴始终会在第 1 帧之前为播放头留出空间；此项会增加更多空间，并且在任何缩放级别下都保持不变。
+	The volume of this layer's sounds, and of the sounds in the symbols on it	此图层声音的音量，以及其上元件内声音的音量
+	Theme	主题
+	These run when the playhead enters frame {keyframe} (the keyframe). For frame {frame}, add a keyframe there ({key}).	这些脚本在播放头进入第 {keyframe} 帧（关键帧）时运行。若要在第 {frame} 帧运行，请在该帧添加关键帧（{key}）。
+	This build has the interface in English only. Builds with translations list their languages here.	此构建版本的界面仅有英文。包含翻译的构建版本会在此列出其可用语言。
+	This cannot be undone.	此操作无法撤销。
+	This pattern has more dashes and gaps than these two; they stay as they are	此图案的短划与间隙比这两个更多；这两个保持原样
+	This scene	此场景
+	This span has no motion tween. Create one to animate its object property by property.	此区段没有动作补间。创建动作补间即可逐个属性地为对象制作动画。
+	This span is empty. Draw or place an object, then create a motion tween.	此区段为空。请先绘制或放置一个对象，然后创建动作补间。
+	Threshold	阈值
+	Threshold level	阈值级别
+	Tied to the frames: plays over this span and follows the playhead (lip sync)	与帧绑定：在此区段内播放并跟随播放头（口型同步）
+	Time at the playhead	播放头处的时间
+	Timeline	时间轴
+	Times it plays	播放次数
+	Times it plays in a row	连续播放次数
+	Tint	色调
+	Tint frames before the playhead and after it in their colours; off, they keep their own colours	为播放头之前和之后的帧着上各自的颜色；关闭后它们保留自身颜色
+	To stage	到舞台
+	Tool	工具
+	Tools	工具
+	Top	顶部
+	Trace	跟踪
+	Trace actions, frame-script logs and anything that couldn't run appear here.	跟踪动作、帧脚本日志以及未能运行的内容都会显示在这里。
+	Trace message	跟踪消息
+	Transform	变换
+	Transform on Multiple Frames	多帧变换
+	Turn off on Linux desktops without an XDG desktop portal; AniCraft then asks for a path instead.	在没有 XDG desktop portal 的 Linux 桌面上请将其关闭；AniCraft 会改为询问路径。
+	Turn the object as its motion path turns	让对象随运动路径的转向而旋转
+	Turn with the motion guide as it bends	随运动引导线的弯曲而转向
+	Turns a flattened tip (clockwise)	旋转压扁的笔尖（顺时针）
+	Turns the stroke into straight segments.	将描边转换为直线段。
+	Tween	补间
+	Tween kind	补间类型
+	Tween to the next keyframe	补间到下一关键帧
+	Tween to the next keyframe instead	改为补间到下一关键帧
+	Type	类型
+	Type a command, tool or setting…	输入命令、工具或设置…
+	Type on the stage (or double-click the text)	在舞台上输入（或双击文本）
+	Type text	输入文本
+	Typefaces: {fonts}	字体：{fonts}
+	Ubuntu (fallback) + JetBrains Mono	Ubuntu（后备）+ JetBrains Mono
+	Ubuntu + Hack (built-in defaults; build with CRAFT_FONTS_DIR for Inter + JetBrains Mono)	Ubuntu + Hack（内置默认；使用 CRAFT_FONTS_DIR 构建即为 Inter + JetBrains Mono）
+	Unbind Shape	解除形状绑定
+	Undid {action}	已撤销 {action}
+	Undo	撤销
+	Undo {action}	撤销 {action}
+	Uniform	均匀
+	Unmute this layer's sounds	取消此图层声音的静音
+	Unpin	取消固定
+	Unpin Motion Path Point	取消固定运动路径点
+	Unpin from Frame {frame}	从第 {frame} 帧取消固定
+	Unpin point {anchor} of the motion path from frame {frame}: its X and Y keyframes go	将运动路径的点 {anchor} 从第 {frame} 帧取消固定：其 X 和 Y 关键帧将被移除
+	Unpin the motion path point at this frame	取消固定此帧处的运动路径点
+	Unpinned point {anchor} from frame {frame}: it shapes the path only. {undo} to undo.	已将点 {anchor} 从第 {frame} 帧取消固定：它现在仅用于塑造路径。按 {undo} 可撤销。
+	Untitled	未命名
+	Up/Down choose · Enter run · Esc close	上/下选择 · Enter 运行 · Esc 关闭
+	Updated {name} {version} — find it in Commands › Plug-ins	已更新 {name} {version} — 可在“命令 › 插件”中找到
+	Use count	使用次数
+	Use it for {action}	将其用于 {action}
+	Use the system's open and save dialogs	使用系统的打开和保存对话框
+	Uses	使用情况
+	Version {version} · {stage}	版本 {version} · {stage}
+	Vertical Center	垂直居中
+	Video (WebM or MP4)	视频（WebM 或 MP4）
+	Video export runs ffmpeg, which a web browser can't start: use the desktop app, or export an animated GIF or a PNG sequence	视频导出需要运行 ffmpeg，而网页浏览器无法启动它：请改用桌面应用，或导出动画 GIF 或 PNG 序列
+	View	视图
+	View action	查看动作
+	Visible	可见
+	Volume	音量
+	Volume points of your own, per channel (Edit Envelope)	每个声道的自定义音量点（编辑包络）
+	WAV	WAV
+	WAV sound	WAV 声音
+	Web page	网页
+	WebAssembly plug-in	WebAssembly 插件
+	Welcome to AniCraft. Press Enter to play the sample animation.	欢迎使用 AniCraft。按 Enter 播放示例动画。
+	What runs when the playhead enters a keyframe	播放头进入关键帧时运行的内容
+	What runs when the playhead enters this keyframe ({key})	播放头进入此关键帧时运行的内容（{key}）
+	What the selected button or movie clip does on clicks and the pointer	所选按钮或影片剪辑在点击和指针操作时的行为
+	Wheel	滚轮
+	Where AniCraft's documents and files are on this computer	AniCraft 的文档和文件在此计算机上的存放位置
+	Where the motion starts. Changing it moves the whole path, and the object with it; the timing stays.	运动的起点。更改它将移动整条路径，对象也随之移动；时序保持不变。
+	Whichever comes first. 0 changes: by time only. Copies are written in the background, so drawing never waits.	以先到者为准。更改次数设为 0 即停用：仅按时间。副本在后台写入，因此绘制从不等待。
+	White text on black, a yellow focus and selection colour, outlined controls.	黑底白字，黄色的焦点与选择颜色，带轮廓的控件。
+	Width	宽度
+	Width Profile	宽度轮廓
+	Width at Point	点处宽度
+	Window	窗口
+	Windows	Windows
+	Wrap	换行
+	Wrap lines at a fixed width; off, each paragraph stays on one line	按固定宽度换行；关闭后每个段落保持在同一行
+	X	X
+	Y	Y
+	You have unsaved changes.	您有未保存的更改。
+	Zoom	缩放
+	Zoom Camera	缩放摄像机
+	Zoom In	放大
+	Zoom Out	缩小
+	Zoom at the cursor	在光标处缩放
+	Zoom in	放大
+	Zoom in / out	放大 / 缩小
+	Zoom out	缩小
+	Zoom to fit	缩放以适应
+	autosaved {when}	自动保存于{when}
+	bone	骨骼
+	bones	骨骼
+	by {author} · {id} · {size} KB	由 {author} 开发 · {id} · {size} KB
+	cache {frames} fr · {size} MB · {hit}% hit	缓存 {frames} 帧 · {size} MB · 命中率 {hit}%
+	cancelling	正在取消
+	changes	更改次数
+	could not open {path}: {e}	无法打开 {path}：{e}
+	could not start sound ({error})	无法启动声音（{error}）
+	dots are round	点为圆形
+	early alpha	早期 Alpha
+	fixed	已修复
+	frame {number}	第 {number} 帧
+	gradient	渐变
+	instance name	实例名称
+	it is larger than {size} MB	其大小超过 {size} MB
+	just now	刚刚
+	keyed	已设关键帧
+	macOS	macOS
+	memory only	仅内存
+	missing bitmap	缺少位图
+	mixed	混合
+	moving between fields	在字段之间移动
+	no settings folder on this system	此系统上没有设置文件夹
+	no sound output device	没有声音输出设备
+	none	无
+	not saved yet (File › Save)	尚未保存（文件 › 保存）
+	not used	未使用
+	nothing	无
+	nothing (not a key)	无（不是按键）
+	nothing to erase there	该处没有可擦除的内容
+	of {frames}	共 {frames} 帧
+	other	其他
+	panning with any tool	任何工具下均可平移
+	paused	已暂停
+	play / stop	播放 / 停止
+	played once	已播放一次
+	playing	正在播放
+	quitting	正在退出
+	render {ms} ms · tiles {ready}/{needed}	渲染 {ms} 毫秒 · 分块 {ready}/{needed}
+	render {ms} ms · {renderer} · tiles {ready}/{needed}	渲染 {ms} 毫秒 · {renderer} · 分块 {ready}/{needed}
+	shows	显示
+	stopped	已停止
+	the browser could not read it	浏览器无法读取它
+	the browser's storage for this site is full (documents with large images or sounds may not fit)	浏览器为此站点分配的存储空间已满（含大图片或大声音的文档可能放不下）
+	the command palette	命令面板
+	the shortcut editor	快捷键编辑器
+	the sound device has no usable format ({error})	声音设备没有可用的格式（{error}）
+	the sound device wants {format} samples, which AniCraft doesn't write yet	声音设备要求 {format} 格式的采样，而 AniCraft 尚无法输出该格式
+	the web version of AniCraft has no sound output yet	AniCraft 网页版尚无声音输出
+	this action	此操作
+	this browser keeps no storage for the site (private browsing?)	该浏览器没有为这个站点保留任何存储空间（是否为隐私浏览模式？）
+	this browser's storage for this site	该浏览器为此站点使用的存储空间
+	this build of AniCraft has no sound output	此 AniCraft 构建版本没有声音输出
+	undo {steps} · {size} MB	撤销 {steps} 步 · {size} MB
+	web browser	网页浏览器
+	written to Output	已写入 Output
+	yesterday	昨天
+	{action} shortcut {key}	{action} 快捷键 {key}
+	{action}: back to the default	{action}：恢复默认
+	{action}: key removed	{action}：已移除按键
+	{action}: {key}	{action}：{key}
+	{action}: {key} (removed from {other})	{action}：{key}（已从 {other} 移除）
+	{channel}: click to add a volume point	{channel}：单击可添加音量点
+	{command}\nSelect something to align	{command}\n请选择要对齐的内容
+	{filter} angle	{filter} 角度
+	{filter} blur X	{filter} 模糊 X
+	{filter} blur Y	{filter} 模糊 Y
+	{filter} colour	{filter} 颜色
+	{filter} colour stop {stop} at {at}%	{filter} 色标 {stop}，位于 {at}%
+	{filter} colour stop {stop} at {at}% (fixed)	{filter} 色标 {stop}，位于 {at}%（已固定）
+	{filter} distance	{filter} 距离
+	{filter} gradient: add a colour stop	{filter} 渐变：添加色标
+	{filter} highlight colour	{filter} 高光颜色
+	{filter} knockout	{filter} 挖空
+	{filter} quality {quality}	{filter} 品质 {quality}
+	{filter} shadow colour	{filter} 阴影颜色
+	{filter} stop colour	{filter} 色标颜色
+	{filter} stop position	{filter} 色标位置
+	{filter} strength	{filter} 强度
+	{filter} type {kind}	{filter} 类型 {kind}
+	{folder} already has “{name}”; the new symbol will be “{becomes}”.	{folder} 中已有“{name}”；新元件将命名为“{becomes}”。
+	{key} could not be moved.	无法移动 {key}。
+	{key} is already used by {action}.	{key} 已被 {action} 使用。
+	{key} is kept for {purpose}; choose another key.	{key} 已保留给 {purpose} 使用；请选择其他按键。
+	{kind} · {frames}	{kind} · {frames}
+	{level} % at {time} · drag to move, right-click to delete	{level}%，位于 {time} · 拖动可移动，右键单击可删除
+	{name} (button)	{name}（按钮）
+	{name} (graphic)	{name}（图形）
+	{name} (main timeline)	{name}（主时间轴）
+	{name} (movie clip)	{name}（影片剪辑）
+	{name} (scene {number} of {count})	{name}（第 {number} 个场景，共 {count} 个）
+	{name} ({kind})	{name}（{kind}）
+	{name} ({secs} s) is in the Library. Select a keyframe and pick it under Sound in Properties.	{name}（{secs} 秒）已在库中。请选择一个关键帧，然后在属性面板的“声音”下选取它。
+	{name} ({secs} s) is on a new layer from frame {frame}. Set its sync in Properties. {undo} to undo.	{name}（{secs} 秒）已放置到新图层上，从第 {frame} 帧开始。可在属性面板中设置其同步。按 {undo} 撤销。
+	{name} folder row	{name} 文件夹行
+	{name} · armature layer	{name} · 骨架图层
+	{name} · bone rig	{name} · 骨骼绑定
+	{name} · camera layer	{name} · 摄像机图层
+	{name} · folder	{name} · 文件夹
+	{name} · guide layer	{name} · 引导层
+	{name} · layer	{name} · 图层
+	{name} · mask layer	{name} · 遮罩图层
+	{name} · masked layer	{name} · 被遮罩图层
+	{name} · switch layer	{name} · 切换图层
+	{name} — {undo} to undo	{name} — 按 {undo} 撤销
+	{name}: off\nDragged points and selections snap to points, lines and fill edges within 10 pixels.	{name}：关\n拖动的点与选区会贴齐到 10 像素范围内的点、线条和填充边缘。
+	{name}: on\nDragged points and selections snap to points, lines and fill edges within 10 pixels.	{name}：开\n拖动的点与选区会贴齐到 10 像素范围内的点、线条和填充边缘。
+	{name}: {message} — {undo} to undo	{name}：{message} — 按 {undo} 撤销
+	{os} · settings stored in {place}	{os} · 设置存储在 {place}
+	{panel} · {next} for the next panel	{panel} · 按 {next} 可切换到下一个面板
+	{path} · button	{path} · 按钮
+	{path} · movie clip	{path} · 影片剪辑
+	{plugin}: {reason}	{plugin}：{reason}
+	{property} curve	{property} 曲线
+	{property} ease	{property} 缓动
+	{property} has no keyframes: it stays {value}. Click ◇ or drag its value to key it here.	{property} 没有关键帧：它将保持为 {value}。单击 ◇ 或拖动其数值即可在此设置关键帧。
+	{property} keyframe at frame {frame}	{property} 第 {frame} 帧关键帧
+	{property} · keyed	{property} · 已设关键帧
+	{report} Save to keep it as an AniCraft document.	{report} 保存即可将其保留为 AniCraft 文档。
+	{row} · has selected artwork	{row} · 含有选中的图形
+	{seconds} s · {khz} kHz mono · {format}	{seconds} 秒 · {khz} kHz 单声道 · {format}
+	{seconds} s · {khz} kHz stereo · {format}	{seconds} 秒 · {khz} kHz 立体声 · {format}
+	{shared}; and on a device of its own: {e}	{shared}；另外在独立设备上：{e}
+	{shown} of {total}	{shown}/{total}
+	{tool} tool	{tool} 工具
+	{undo} to undo.	按 {undo} 撤销。
+	“{id}” isn't installed here: Test Movie says so and plays on.	此处未安装“{id}”：测试影片会提示这一点并继续播放。
+	… older steps freed (memory budget)	… 已释放较早的步骤（内存预算）
+left channel	L	L
+right channel	R	R
+@plural	+{n} more|+{n} more	另外 {n} 个
+@plural	An action can have up to {n} key.|An action can have up to {n} keys.	一个动作最多可包含 {n} 个按键。
+@plural	AniCraft didn't close properly last time. This document had changes that weren't saved:|AniCraft didn't close properly last time. These documents had changes that weren't saved:	AniCraft 上次未正常关闭。这些文档有未保存的更改：
+@plural	Applied the picked bitmap fill to {n} shape. {undo} to undo.|Applied the picked bitmap fill to {n} shapes. {undo} to undo.	已将所选位图填充应用到 {n} 个图形。按 {undo} 撤销。
+@plural	Applied the picked fill {color} to {n} shape. {undo} to undo.|Applied the picked fill {color} to {n} shapes. {undo} to undo.	已将所选填充 {color} 应用到 {n} 个图形。按 {undo} 撤销。
+@plural	Applied the picked line {color}, {width} px to {n} shape. {undo} to undo.|Applied the picked line {color}, {width} px to {n} shapes. {undo} to undo.	已将所选线条 {color}、{width} px 应用到 {n} 个图形。按 {undo} 撤销。
+@plural	Applied the picked linear gradient to {n} shape. {undo} to undo.|Applied the picked linear gradient to {n} shapes. {undo} to undo.	已将所选线性渐变应用到 {n} 个图形。按 {undo} 撤销。
+@plural	Applied the picked radial gradient to {n} shape. {undo} to undo.|Applied the picked radial gradient to {n} shapes. {undo} to undo.	已将所选径向渐变应用到 {n} 个图形。按 {undo} 撤销。
+@plural	Autosaved {when} · {n} frame|Autosaved {when} · {n} frames	已于 {when} 自动保存 · {n} 帧
+@plural	Autosaved {when} · {n} frame · {scenes} scenes|Autosaved {when} · {n} frames · {scenes} scenes	已于 {when} 自动保存 · {n} 帧 · {scenes} 个场景
+@plural	Cleared {n} keyframe — {undo} to undo|Cleared {n} keyframes — {undo} to undo	已清除 {n} 个关键帧 — 按 {undo} 撤销
+@plural	Click a channel to add a point (up to {max}), drag a point to shape the volume, right-click it to delete it. {n} point.|Click a channel to add a point (up to {max}), drag a point to shape the volume, right-click it to delete it. {n} points.	单击声道可添加点（最多 {max} 个），拖动点可调整音量曲线，右键单击可删除点。{n} 个点。
+@plural	Copied {n} element. Paste in Place ({key}) puts it back on its keyframe.|Copied {n} elements. Paste in Place ({key}) puts each back on its keyframe.	已拷贝 {n} 个元素。原位粘贴（{key}）会将其放回各自的关键帧。
+@plural	Copied {n} frame|Copied {n} frames	已拷贝 {n} 帧
+@plural	Curved · {n} segment|Curved · {n} segments	曲线 · {n} 个线段
+@plural	Custom ({n} point)|Custom ({n} points)	自定义（{n} 个点）
+@plural	Cut {n} element from the frames between the markers. {undo} to undo.|Cut {n} elements from the frames between the markers. {undo} to undo.	已从标记之间的帧剪切 {n} 个元素。按 {undo} 撤销。
+@plural	Cut {n} frame — {undo} to undo|Cut {n} frames — {undo} to undo	已剪切 {n} 帧 — 按 {undo} 撤销
+@plural	Delete Point|Delete Points	删除点
+@plural	Deleted {n} element on the frames between the markers. {undo} to undo.|Deleted {n} elements on the frames between the markers. {undo} to undo.	已删除标记之间各帧上的 {n} 个元素。按 {undo} 撤销。
+@plural	Deleted {n} element — {undo} to undo|Deleted {n} elements — {undo} to undo	已删除 {n} 个元素 — 按 {undo} 撤销
+@plural	Deleted {n} point from the motion path. {undo} to undo.|Deleted {n} points from the motion path. {undo} to undo.	已从运动路径中删除 {n} 个点。按 {undo} 撤销。
+@plural	Deleted {n} point from the motion path; its ends stay, as they are where the motion starts and ends. {undo} to undo.|Deleted {n} points from the motion path; its ends stay, as they are where the motion starts and ends. {undo} to undo.	已从运动路径中删除 {n} 个点；两端保留，因为它们是运动的起点和终点。按 {undo} 撤销。
+@plural	Deleted {n} point. {undo} to undo.|Deleted {n} points. {undo} to undo.	已删除 {n} 个点。按 {undo} 撤销。
+@plural	Deleted {n} point; kept {kept} where three or more lines meet. {undo} to undo.|Deleted {n} points; kept {kept} where three or more lines meet. {undo} to undo.	已删除 {n} 个点；保留了位于三条或更多线条交汇处的 {kept} 个点。按 {undo} 撤销。
+@plural	Doesn't run: {n} problem|Doesn't run: {n} problems	无法运行：{n} 个问题
+@plural	Erased everything at frame {frame} ({n} element). {undo} to undo.|Erased everything at frame {frame} ({n} elements). {undo} to undo.	已擦除第 {frame} 帧上的全部内容（{n} 个元素）。按 {undo} 撤销。
+@plural	Exported {n} frame to {path} ({columns}×{rows} grid) and its frame map {map}|Exported {n} frames to {path} ({columns}×{rows} grid) and its frame map {map}	已将 {n} 帧导出到 {path}（{columns}×{rows} 网格），帧映射表为 {map}
+@plural	Exported {path} ({n} frame, {kb} KB): open it in a web browser.|Exported {path} ({n} frames, {kb} KB): open it in a web browser.	已导出 {path}（{n} 帧，{kb} KB）：请在网页浏览器中打开。
+@plural	Exported {path} ({n} frame, {layers} layers).|Exported {path} ({n} frames, {layers} layers).	已导出 {path}（{n} 帧，{layers} 个图层）。
+@plural	Folder · {n} item|Folder · {n} items	文件夹 · {n} 个项目
+@plural	Moved {frames} {n} layer down — {undo} to undo|Moved {frames} {n} layers down — {undo} to undo	已将 {frames} 中的 {n} 个图层下移 — 按 {undo} 撤销
+@plural	Moved {frames} {n} layer up — {undo} to undo|Moved {frames} {n} layers up — {undo} to undo	已将 {frames} 中的 {n} 个图层上移 — 按 {undo} 撤销
+@plural	Moved {n} frame by {by} — {undo} to undo|Moved {n} frames by {by} — {undo} to undo	已将 {n} 帧移动 {by} — 按 {undo} 撤销
+@plural	Pasted in place onto {n} keyframe. {undo} to undo.|Pasted in place onto {n} keyframes. {undo} to undo.	已原位粘贴到 {n} 个关键帧上。按 {undo} 撤销。
+@plural	Pasted {n} frame — {undo} to undo|Pasted {n} frames — {undo} to undo	已粘贴 {n} 帧 — 按 {undo} 撤销
+@plural	Plays its {n}-frame timeline on a loop from when it appears.|Plays its {n}-frame timeline on a loop from when it appears.	从出现时起循环播放其 {n} 帧时间轴。
+@plural	Removed {n} frame — {undo} to undo|Removed {n} frames — {undo} to undo	已移除 {n} 帧 — 按 {undo} 撤销
+@plural	Reset {n} changed shortcut to the defaults?|Reset {n} changed shortcuts to the defaults?	要将 {n} 个已更改的快捷键重置为默认吗？
+@plural	Selected {n} element on the frames between the markers|Selected {n} elements on the frames between the markers	已选中标记之间各帧上的 {n} 个元素
+@plural	Stage · {tool} tool · frame {frame} · {n} element selected|Stage · {tool} tool · frame {frame} · {n} elements selected	舞台 · {tool} 工具 · 第 {frame} 帧 · 已选中 {n} 个元素
+@plural	Stage · {tool} tool · frame {frame} · {n} element selected {on_layers}|Stage · {tool} tool · frame {frame} · {n} elements selected {on_layers}	舞台 · {tool} 工具 · 第 {frame} 帧 · 已选中 {n} 个元素 {on_layers}
+@plural	a stream looping over its {n}-frame span|a stream looping over its {n}-frame span	在其 {n} 帧范围内循环的流
+@plural	a stream, within its {n}-frame span|a stream, within its {n}-frame span	一个流，在其 {n} 帧范围内
+@plural	looping to the end of the movie, {n} frame on|looping to the end of the movie, {n} frames on	循环到影片结尾，{n} 帧后开始
+@plural	on {n} layer|on {n} layers	位于 {n} 个图层上
+@plural	played {n} time|played {n} times	已播放 {n} 次
+@plural	used {n} time|used {n} times	已使用 {n} 次
+@plural	{first}–{last} of {n} layer|{first}–{last} of {n} layers	第 {first}–{last} 个，共 {n} 个图层
+@plural	{name} and {n} more|{name} and {n} more	{name} 及另外 {n} 个
+@plural	{n} command is scriptable with anicraft-cli|{n} commands are scriptable with anicraft-cli	{n} 个命令可通过 anicraft-cli 脚本调用
+@plural	{n} day ago|{n} days ago	{n} 天前
+@plural	{n} element|{n} elements	{n} 个元素
+@plural	{n} element in a new folder of {layers} layers with a mask.|{n} elements in a new folder of {layers} layers with a mask.	{n} 个元素位于带遮罩、含 {layers} 个图层的新文件夹中。
+@plural	{n} element in a new folder of {layers} layers with {masks} masks.|{n} elements in a new folder of {layers} layers with {masks} masks.	{n} 个元素位于含 {layers} 个图层、{masks} 个遮罩的新文件夹中。
+@plural	{n} element on a new layer.|{n} elements on a new layer.	{n} 个元素位于新图层上。
+@plural	{n} element {on_layers}|{n} elements {on_layers}	{n} 个元素 {on_layers}
+@plural	{n} engine command — all available headless via anicraft-cli.|{n} engine commands — all available headless via anicraft-cli.	{n} 个引擎命令 — 全部可通过 anicraft-cli 无界面使用。
+@plural	{n} frame|{n} frames	{n} 帧
+@plural	{n} frame before and after the playhead|{n} frames before and after the playhead	播放头前后各 {n} 帧
+@plural	{n} frame script doesn't run|{n} frame scripts don't run	{n} 个帧脚本无法运行
+@plural	{n} frame · {secs} s|{n} frames · {secs} s	{n} 帧 · {secs} 秒
+@plural	{n} h ago|{n} h ago	{n} 小时前
+@plural	{n} item|{n} items	{n} 个项目
+@plural	{n} layer|{n} layers	{n} 个图层
+@plural	{n} line|{n} lines	{n} 条线
+@plural	{n} min ago|{n} min ago	{n} 分钟前
+@plural	{n} plug-in installed|{n} plug-ins installed	已安装 {n} 个插件
+@plural	{n} plug-in installed; {failed} could not be loaded|{n} plug-ins installed; {failed} could not be loaded	已安装 {n} 个插件；{failed} 个无法加载
+@plural	{n} point|{n} points	{n} 个点
+@plural	{n} second|{n} seconds	{n} 秒
+@plural	{n} silenced this session|{n} silenced this session	本次会话已静默 {n} 条
+@plural	{n} step|{n} steps	{n} 步
+@plural	{n} unused item selected|{n} unused items selected	已选中 {n} 个未使用的项目
+@plural	{properties} · {n} key frame|{properties} · {n} key frames	{properties} · {n} 个关键帧
