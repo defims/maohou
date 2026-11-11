@@ -250,6 +250,7 @@ pub fn field(el: &X, fonts: &Fonts, faces: &mut HashMap<String, FaceMatch>, repo
             line_spacing: st.line_spacing,
             width,
             outline: Arc::new(layout.outline),
+            stroke: None,
             box_width: layout.width,
             box_height: layout.height,
         };

@@ -87,11 +87,17 @@ fn the_layer_tree_flattens_top_first_with_folders_first() {
     assert_eq!(head.kind, anicraft_doc::LayerKind::Folder);
     let eyes = tl.layers.iter().find(|l| l.name == "Eyes").unwrap();
     assert_eq!(eyes.parent, Some(head.id));
-    // The frozen selection keeps Smile visible and hides Frown.
+    // The switch imports as a switch with its selector: Smile picked at frame 0, so Smile
+    // draws and Frown waits (ADR 0105) — nothing is frozen or hidden.
+    let mouths = tl.layers.iter().find(|l| l.name == "Mouths").unwrap();
+    assert_eq!(mouths.kind, anicraft_doc::LayerKind::Switch);
+    assert_eq!(mouths.switch_to.keys[0].val, "Smile");
     let smile = tl.layers.iter().find(|l| l.name == "Smile").unwrap();
     let frown = tl.layers.iter().find(|l| l.name == "Frown").unwrap();
-    assert!(smile.visible && !frown.visible);
-    assert!(report.skipped.contains_key("switch selection (frozen: Smile)"));
+    assert!(smile.visible && frown.visible, "the selector decides, not visibility");
+    assert!(tl.shows_through_switches(3, 0), "Smile (index 3) draws");
+    assert!(!tl.shows_through_switches(4, 0), "Frown (index 4) waits");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
 }
 
 #[test]

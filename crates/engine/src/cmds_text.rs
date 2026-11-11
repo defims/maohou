@@ -3,7 +3,7 @@
 
 use crate::params::*;
 use crate::{CommandSpec, EngineError, Result, Session};
-use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Rgba, TextAlign, TextBlock};
+use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Rgba, Stroke, TextAlign, TextBlock};
 use anicraft_geom::{Affine, Path};
 use anicraft_text::{Align, Fonts};
 use serde_json::{Value, json};
@@ -20,11 +20,13 @@ pub struct TextStyle {
     pub align: TextAlign,
     pub letter_spacing: f32,
     pub line_spacing: f32,
+    /// The outline stroke around the glyphs (`None`: fill only; ADR 0105).
+    pub stroke: Option<Stroke>,
 }
 
 impl Default for TextStyle {
     fn default() -> Self {
-        TextStyle { font: String::new(), size: 32.0, bold: false, italic: false, color: Rgba::BLACK, align: TextAlign::Left, letter_spacing: 0.0, line_spacing: 0.0 }
+        TextStyle { font: String::new(), size: 32.0, bold: false, italic: false, color: Rgba::BLACK, align: TextAlign::Left, letter_spacing: 0.0, line_spacing: 0.0, stroke: None }
     }
 }
 
@@ -32,8 +34,8 @@ impl Default for TextStyle {
 pub fn specs() -> Vec<CommandSpec> {
     let c = |id, label, menu, shortcut, params, mutates, run| CommandSpec { id, label, menu, shortcut, params, mutates, run };
     vec![
-        c("text.create", "New Text", "", None, "{text, x?, y? (top-left; default: centred), font?, size?, bold?, italic?, color?, align?, letter_spacing?, line_spacing?, width?}", true, create as crate::RunFn),
-        c("text.edit", "Edit Text", "", None, "{text?, font?, size? (px), bold?, italic?, color?, align?: left|center|right, letter_spacing?, line_spacing?, width? (px, wraps; null: one line per paragraph)} on the selected text", true, edit),
+        c("text.create", "New Text", "", None, "{text, x?, y? (top-left; default: centred), font?, size?, bold?, italic?, color?, align?, letter_spacing?, line_spacing?, width?, stroke_width? (px, >0.1; null removes the stroke), stroke_color?}", true, create as crate::RunFn),
+        c("text.edit", "Edit Text", "", None, "{text?, font?, size? (px), bold?, italic?, color?, align?: left|center|right, letter_spacing?, line_spacing?, width? (px, wraps; null: one line per paragraph), stroke_width? (px; null removes the stroke), stroke_color?} on the selected text", true, edit),
         c("text.fonts", "Fonts", "", None, "{}", false, fonts),
     ]
 }
@@ -79,7 +81,24 @@ fn style_param(p: &Value, base: &TextStyle) -> Result<TextStyle> {
         align: align_param(p)?.unwrap_or(base.align),
         letter_spacing: spacing("letter_spacing", base.letter_spacing)?,
         line_spacing: spacing("line_spacing", base.line_spacing)?,
+        stroke: stroke_param(p, base)?,
     })
+}
+
+/// The text's stroke: `stroke_width` > 0.1 sets (or widens) it, `null` removes it, absent
+/// keeps it; `stroke_color` recolours it (a stroke being created takes the text colour
+/// otherwise).
+fn stroke_param(p: &Value, base: &TextStyle) -> Result<Option<Stroke>> {
+    let (w, c) = base.stroke.as_ref().map_or((2.0, base.color), |s| (s.width, s.color));
+    let color = opt_color(p, "stroke_color")?.unwrap_or(c);
+    match p.get("stroke_width") {
+        None => Ok(base.stroke.as_ref().map(|s| Stroke { color, ..s.clone() })),
+        Some(Value::Null) => Ok(None),
+        Some(_) => match opt_f32(p, "stroke_width")?.unwrap_or(w) {
+            width if (0.1..=1000.0).contains(&width) => Ok(Some(Stroke::new(color, width))),
+            _ => Err(EngineError::Param("'stroke_width' must be between 0.1 and 1000 px, or null to remove the stroke".into())),
+        },
+    }
 }
 
 /// Lays a block out with this computer's fonts. Also says when the family asked for isn't
@@ -117,6 +136,7 @@ pub(crate) fn lay_out(text: &str, style: &TextStyle, width: Option<f32>) -> Resu
         letter_spacing: style.letter_spacing,
         line_spacing: style.line_spacing,
         width,
+        stroke: style.stroke.clone(),
         outline: Arc::new(layout.outline),
         box_width: layout.width,
         box_height: layout.height,
@@ -125,7 +145,7 @@ pub(crate) fn lay_out(text: &str, style: &TextStyle, width: Option<f32>) -> Resu
 }
 
 fn style_of(t: &TextBlock) -> TextStyle {
-    TextStyle { font: t.font.clone(), size: t.size, bold: t.bold, italic: t.italic, color: t.color, align: t.align, letter_spacing: t.letter_spacing, line_spacing: t.line_spacing }
+    TextStyle { font: t.font.clone(), size: t.size, bold: t.bold, italic: t.italic, color: t.color, align: t.align, letter_spacing: t.letter_spacing, line_spacing: t.line_spacing, stroke: t.stroke.clone() }
 }
 
 fn create(s: &mut Session, p: &Value) -> Result<Value> {
@@ -184,5 +204,5 @@ fn fonts(_: &mut Session, _: &Value) -> Result<Value> {
 /// A text block as a plain shape with the same outlines (Break Apart).
 pub(crate) fn to_shape(t: &TextBlock) -> anicraft_doc::Shape {
     let path: Arc<Path> = t.outline.clone();
-    anicraft_doc::Shape { path, fill: Some(anicraft_doc::Paint::Solid(t.color)), stroke: None, fill_rule: anicraft_geom::FillRule::NonZero, merge: false, bind: Vec::new() }
+    anicraft_doc::Shape { path, fill: Some(anicraft_doc::Paint::Solid(t.color)), stroke: t.stroke.clone(), fill_rule: anicraft_geom::FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }
 }

@@ -706,3 +706,135 @@ fn full_opacity_layer_makes_no_group() {
     assert!(dl.groups.is_empty(), "a fully opaque layer composites as before");
 }
 
+
+// --- stage 5: switch layers, point tracks, trim, text strokes ---
+
+use crate::{LayerKind, PointTrack, Stroke, TextAlign, TextBlock, Trim};
+
+/// A switch layer with two named variants under it.
+fn switch_doc() -> (Document, crate::LayerId) {
+    let mut d = Document::default();
+    let mut sw = Layer::new(LayerId(1), "Mouths");
+    sw.kind = LayerKind::Switch;
+    sw.switch_to.set_key(0, "Frown".into());
+    sw.switch_to.set_key(10, "Smile".into());
+    let mut frown = Layer::new(LayerId(2), "Frown");
+    let mut smile = Layer::new(LayerId(3), "Smile");
+    for l in [&mut frown, &mut smile] {
+        l.parent = Some(LayerId(1));
+        let mut k = Keyframe::new(0, 20);
+        k.elements.push(Arc::new(shape_el(l.id.0 * 10, 0.0)));
+        l.keyframes = vec![Arc::new(k)];
+    }
+    let tl = d.timeline_mut(0);
+    tl.layers = vec![Arc::new(sw), Arc::new(frown), Arc::new(smile)];
+    (d, crate::LayerId(1))
+}
+
+#[test]
+fn a_switch_shows_only_the_picked_variant() {
+    let (d, _) = switch_doc();
+    let names = |f: u32| -> Vec<u64> { evaluate(&d, f).items.iter().map(|i| i.element.0).collect() };
+    assert_eq!(names(0), vec![20], "frame 0 picks Frown");
+    assert_eq!(names(10), vec![30], "frame 10 picks Smile");
+    assert_eq!(names(5), vec![20], "the selector holds between keys");
+}
+
+#[test]
+fn an_unselected_switch_shows_nothing() {
+    let (mut d, sw) = switch_doc();
+    d.timeline_mut(0).layer_mut(sw).unwrap().switch_to.keys.clear();
+    assert!(evaluate(&d, 0).items.is_empty(), "no selection, no variant");
+}
+
+#[test]
+fn a_variant_naming_no_child_shows_nothing() {
+    let (mut d, sw) = switch_doc();
+    d.timeline_mut(0).layer_mut(sw).unwrap().switch_to.set_key(0, "Pucker".into());
+    assert!(evaluate(&d, 0).items.is_empty());
+}
+
+#[test]
+fn a_hidden_switch_hides_its_variants() {
+    let (mut d, sw) = switch_doc();
+    d.timeline_mut(0).layer_mut(sw).unwrap().visible = false;
+    assert!(evaluate(&d, 0).items.is_empty());
+}
+
+#[test]
+fn a_faded_switch_composites_the_variant_as_one_group() {
+    let (mut d, sw) = switch_doc();
+    d.timeline_mut(0).layer_mut(sw).unwrap().opacity = Channel::constant(0, 0.5);
+    let dl = evaluate(&d, 0);
+    assert_eq!(dl.items.len(), 1);
+    assert_eq!(dl.groups.len(), 1);
+    assert!((dl.groups[0].alpha - 0.5).abs() < 1e-6);
+    assert_eq!(dl.items[0].group, Some(0));
+}
+
+#[test]
+fn point_tracks_move_the_drawn_path() {
+    let mut d = Document::default();
+    let mut shape = Shape::filled(Path::rect(0.0, 0.0, 10.0, 10.0), Paint::Solid(Rgba::BLACK));
+    let mut ch = Channel::default();
+    ch.set_key(0, Vec2::new(10.0, 10.0));
+    ch.set_key(10, Vec2::new(30.0, 10.0));
+    shape.points.push(PointTrack { index: 2, position: ch }); // the second LineTo endpoint
+    let mut k = Keyframe::new(0, 20);
+    k.elements.push(Arc::new(Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Shape(shape) }));
+    layer0(&mut d).keyframes = vec![Arc::new(k)];
+    let at = |f: u32| {
+        let it = &evaluate(&d, f).items[0];
+        let anicraft_geom::PathCmd::LineTo(p) = it.path.cmds[2] else { panic!("line kept") };
+        p
+    };
+    assert_eq!(at(0), Vec2::new(10.0, 10.0), "the rest state is the path itself");
+    assert_eq!(at(10), Vec2::new(30.0, 10.0));
+    assert_eq!(at(5), Vec2::new(20.0, 10.0));
+}
+
+#[test]
+fn an_active_trim_cuts_the_path_and_drops_the_fill() {
+    let mut d = Document::default();
+    let mut shape = Shape::filled(Path::rect(0.0, 0.0, 10.0, 10.0), Paint::Solid(Rgba::BLACK));
+    shape.stroke = Some(Stroke::new(Rgba::BLACK, 2.0));
+    let mut t = Trim::default();
+    t.start.set_key(0, 0.25);
+    t.end.set_key(0, 0.75);
+    shape.trim = Some(t);
+    let mut k = Keyframe::new(0, 20);
+    k.elements.push(Arc::new(Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Shape(shape) }));
+    layer0(&mut d).keyframes = vec![Arc::new(k)];
+    let dl = evaluate(&d, 0);
+    assert!(dl.items[0].fill.is_none(), "a trimmed ring is not a fill");
+    assert!(dl.items[0].stroke.is_some());
+    assert!(dl.items[0].path.cmds.len() < 6, "the cut ring lost its full loop of commands");
+}
+
+#[test]
+fn a_stroked_text_draws_its_fill_then_its_outline() {
+    let mut d = Document::default();
+    let block = TextBlock {
+        text: "Hi".into(),
+        font: "sans".into(),
+        size: 20.0,
+        bold: false,
+        italic: false,
+        color: Rgba::BLACK,
+        align: TextAlign::Left,
+        letter_spacing: 0.0,
+        line_spacing: 0.0,
+        width: None,
+        stroke: Some(Stroke::new(Rgba::WHITE, 2.0)),
+        outline: Arc::new(Path::rect(0.0, 0.0, 10.0, 10.0)),
+        box_width: 10.0,
+        box_height: 10.0,
+    };
+    let mut k = Keyframe::new(0, 20);
+    k.elements.push(Arc::new(Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Text(Arc::new(block)) }));
+    layer0(&mut d).keyframes = vec![Arc::new(k)];
+    let dl = evaluate(&d, 0);
+    assert_eq!(dl.items.len(), 2, "fill, then the stroke over it");
+    assert!(dl.items[0].fill.is_some() && dl.items[0].stroke.is_none());
+    assert!(dl.items[1].fill.is_none() && dl.items[1].stroke.is_some());
+}

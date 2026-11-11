@@ -16,6 +16,7 @@ mod eval;
 mod hints;
 pub mod motion;
 pub mod path_table;
+pub mod points;
 pub mod rig;
 pub mod width;
 pub mod player;
@@ -28,6 +29,7 @@ pub use channel::{Channel, ChannelValue, Handle, Interp, Key, MAX_CHANNEL_FRAME,
 pub use easing::Easing;
 pub use hints::{HINT_TOLERANCE, HintSide, MAX_SHAPE_HINTS, ShapeHint, hint_index, hint_letter, nearest_outline, placed_on, shapes_centre};
 pub use motion::{MotionTween, OnPath, Property, PropertyKey, Props, Track, motion_path};
+pub use points::{PointTrack, Trim, path_point_count, rebuild as rebuild_path, trim as trim_path};
 pub use sound::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundFormat, SoundId, SoundSync};
 pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile};
 pub use camera::Camera;
@@ -255,17 +257,27 @@ pub struct Shape {
     /// point bindings arrive as one pair at weight 1.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bind: Vec<(BoneId, f32)>,
+    /// The shape's animated path points (Moho's per-point position channels; ADR 0105):
+    /// each track drives one point of [`Shape::path`], and evaluation rebuilds the path
+    /// under them. Empty keeps the shared path, so nothing animating costs nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<PointTrack>,
+    /// The part of each subpath that draws (Moho's curve trim; ADR 0105). `None` draws
+    /// everything. While the trim cuts, the shape draws its stroke: the fill of a cut-open
+    /// ring is not a shape any more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trim: Option<Trim>,
 }
 
 impl PartialEq for Shape {
     fn eq(&self, o: &Shape) -> bool {
-        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge && self.bind == o.bind
+        arc_eq(&self.path, &o.path) && self.fill == o.fill && self.stroke == o.stroke && self.fill_rule == o.fill_rule && self.merge == o.merge && self.bind == o.bind && self.points == o.points && self.trim == o.trim
     }
 }
 
 impl Shape {
     pub fn filled(path: Path, fill: Paint) -> Shape {
-        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new() }
+        Shape { path: Arc::new(path), fill: Some(fill), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }
     }
     pub fn with_stroke(mut self, color: Rgba, width: f32) -> Shape {
         self.stroke = Some(Stroke::new(color, width));
@@ -453,6 +465,10 @@ pub struct TextBlock {
     /// Lines wrap to this width; `None` keeps each paragraph on one line.
     #[serde(default)]
     pub width: Option<f32>,
+    /// A stroke drawn along the glyph outlines (Moho's text stroke; ADR 0105). `None`
+    /// draws the fill only, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<Stroke>,
     /// Glyph outlines, local coordinates, the box's top-left corner at the origin.
     #[serde(with = "path_table")]
     pub outline: Arc<Path>,
@@ -532,7 +548,7 @@ fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize) -> Re
             let pad = s.stroke.as_ref().map_or(0.0, Stroke::reach);
             s.path.bounds().inflate(pad).transformed(xf)
         }
-        ElementKind::Text(t) => Rect::new(0.0, 0.0, t.box_width.max(0.0), t.box_height.max(0.0)).transformed(xf),
+        ElementKind::Text(t) => Rect::new(0.0, 0.0, t.box_width.max(0.0), t.box_height.max(0.0)).inflate(t.stroke.as_ref().map_or(0.0, Stroke::reach)).transformed(xf),
         ElementKind::Camera => Rect::EMPTY,
         ElementKind::Symbol { symbol, .. } => {
             let Some(sym) = doc.symbol(*symbol) else { return Rect::EMPTY };
@@ -651,16 +667,21 @@ pub enum LayerKind {
     /// Like a folder it draws nothing itself; its bones move the bound artwork at
     /// evaluation time. Its children name it as their [`Layer::parent`].
     Bone,
+    /// Holds variant layers and shows exactly the one its [`Layer::switch_to`] channel
+    /// names at the current frame (Moho's switch layers): mouth charts, limb sets, poses.
+    /// Like a folder it draws nothing itself. Its children name it as their
+    /// [`Layer::parent`].
+    Switch,
     /// The camera (ADR 0027): at most one per scene timeline, always the top layer; its
     /// keyframes hold the camera, which views every other layer. Draws nothing itself.
     Camera,
 }
 
 impl LayerKind {
-    /// Kinds that hold other layers and draw nothing themselves: a folder and a bone rig
-    /// (ADR 0104). Hiding, locking and nesting treat both alike.
+    /// Kinds that hold other layers and draw nothing themselves: a folder, a bone rig
+    /// (ADR 0104) and a switch (its variants). Hiding, locking and nesting treat all alike.
     pub fn is_container(self) -> bool {
-        matches!(self, LayerKind::Folder | LayerKind::Bone)
+        matches!(self, LayerKind::Folder | LayerKind::Bone | LayerKind::Switch)
     }
 }
 
@@ -757,6 +778,12 @@ pub struct Layer {
     /// to, addressed by [`BoneId`]. `None` on every other layer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skeleton: Option<Arc<Skeleton>>,
+    /// Which variant a [`LayerKind::Switch`] layer shows, by child name, over time (Moho's
+    /// `switch_keys`; the channel always steps — a switch never half-shows two variants).
+    /// Empty on every other layer. A frame whose selection names no child draws nothing:
+    /// that is what an unselected switch is.
+    #[serde(default, skip_serializing_if = "Channel::is_empty")]
+    pub switch_to: Channel<String>,
 }
 
 fn is_zero2(v: &Vec2) -> bool {
@@ -798,6 +825,7 @@ impl PartialEq for Layer {
             && self.opacity == o.opacity
             && self.filters == o.filters
             && self.skeleton == o.skeleton
+            && self.switch_to == o.switch_to
     }
 }
 
@@ -834,6 +862,7 @@ impl Layer {
             opacity: Channel::default(),
             filters: Vec::new(),
             skeleton: None,
+            switch_to: Channel::default(),
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by
@@ -850,6 +879,14 @@ impl Layer {
     /// The layer's opacity at `frame` (`0..=1`; 1.0 when no channel carries keys).
     pub fn opacity_at(&self, frame: u32) -> f32 {
         self.opacity.sample_or(frame as f32, 1.0).clamp(0.0, 1.0)
+    }
+    /// The variant a [`LayerKind::Switch`] shows at `frame`: the child name its selector
+    /// samples, trimmed; `None` when this layer is no switch or nothing is selected.
+    pub fn switch_selection(&self, frame: u32) -> Option<String> {
+        if self.kind != LayerKind::Switch {
+            return None;
+        }
+        self.switch_to.sample(frame as f32).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     }
     /// Whether this layer composites on its own: it carries opacity below full, filters, or
     /// (for folders) transform channels — so it renders as one [`crate::Group`], not as plain
@@ -897,6 +934,7 @@ impl Layer {
         self.flip_h.sanitize();
         self.flip_v.sanitize();
         self.opacity.sanitize();
+        self.switch_to.sanitize();
         for f in &mut self.filters {
             *f = f.sanitized();
         }
@@ -1081,6 +1119,32 @@ impl Timeline {
     /// Whether a folder containing the layer at `index` is hidden (so the layer is too).
     pub fn hidden_by_folder(&self, index: usize) -> bool {
         self.folders_of(index).any(|f| !f.visible)
+    }
+
+    /// Whether the layer at `index` shows at `frame` through every enclosing switch (ADR
+    /// 0105): on the way up, the direct child of each switch must be the variant its
+    /// selector names at `frame`. An unselected switch hides its whole run — an unselected
+    /// switch is no mouth at all. Nesting depth caps at [`MAX_LAYER_DEPTH`].
+    pub fn shows_through_switches(&self, index: usize, frame: u32) -> bool {
+        let mut branch = match self.layers.get(index) {
+            Some(l) => l.id,
+            None => return true,
+        };
+        let mut cur = self.layers.get(index).and_then(|l| l.parent);
+        for _ in 0..=MAX_LAYER_DEPTH {
+            let Some(p) = cur else { return true };
+            let Some(l) = self.layer(p) else { return true };
+            if l.kind == LayerKind::Switch {
+                let pick = l.switch_selection(frame);
+                let shown = pick.is_some_and(|n| self.layer(branch).is_some_and(|b| b.name == n));
+                if !shown {
+                    return false;
+                }
+            }
+            cur = l.parent;
+            branch = p;
+        }
+        true
     }
 
     /// Whether a folder containing layer `id` is locked (so the layer is too).

@@ -143,6 +143,16 @@ impl ChannelValue for bool {
     }
 }
 
+impl ChannelValue for String {
+    const COMPONENTS: usize = 0;
+    fn component(&self, _c: usize) -> f32 {
+        0.0
+    }
+    fn from_components(a: &Self, _b: &Self, _f: impl FnMut(usize) -> f32) -> Self {
+        a.clone()
+    }
+}
+
 /// One animatable value: its keys, sorted by frame, one per frame.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Channel<T> {

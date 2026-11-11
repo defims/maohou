@@ -9,6 +9,7 @@ mod cmds_actions;
 pub mod cmds_brush;
 mod cmds_bone;
 mod cmds_camera;
+mod cmds_switch;
 mod cmds_draw;
 pub mod cmds_erase;
 mod cmds_file;
@@ -103,6 +104,7 @@ pub fn commands() -> Vec<CommandSpec> {
     v.extend(cmds_recovery::specs());
     v.extend(cmds_timeline::specs());
     v.extend(cmds_bone::specs());
+    v.extend(cmds_switch::specs());
     v.extend(cmds_camera::specs());
     v.extend(cmds_motion::specs());
     v.extend(cmds_hints::specs());
@@ -739,6 +741,8 @@ mod tests_actions;
 mod tests_script;
 #[cfg(test)]
 mod tests_bone;
+#[cfg(test)]
+mod tests_switch;
 #[cfg(test)]
 mod tests_camera;
 #[cfg(test)]

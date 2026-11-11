@@ -348,6 +348,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 type_icon(x0 + 24.0, if open { Icon::FolderOpen } else { Icon::Folder });
                 x0 + 37.0
             }
+            // A switch collapses like a folder; its stack of variants is the layers glyph.
+            LayerKind::Switch => {
+                icons::paint(&painter, Rect::from_center_size(chevron.center(), vec2(12.0, 12.0)), if open { Icon::ChevronDown } else { Icon::ChevronRight }, T.text_dim);
+                type_icon(x0 + 24.0, Icon::Layers);
+                x0 + 37.0
+            }
             LayerKind::Mask => {
                 type_icon(x0 + 7.0, Icon::Mask);
                 x0 + 20.0
@@ -367,6 +373,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             _ => x0 + 4.0,
         };
         painter.text(pos2(name_x, left.center().y), Align2::LEFT_CENTER, &layer.name, font(Type::Body), name_color);
+        // A switch names the variant its selector shows at the playhead (data is monospace).
+        if layer.kind == LayerKind::Switch
+            && let Some(v) = layer.switch_to.sample(app.s.frame as f32).filter(|s| !s.trim().is_empty())
+        {
+            let w = painter.layout_no_wrap(layer.name.clone(), font(Type::Body), name_color).rect.width() + 8.0;
+            painter.text(pos2(name_x + w, left.center().y), Align2::LEFT_CENTER, format!("▸ {v}"), font(Type::DataSmall), T.text_dim);
+        }
 
         // eye / lock / outline toggles: 24 × 24 targets with a hover fill
         let toggle = |k: f32| Rect::from_center_size(pos2(left.right() - 16.0 - k * (TOGGLE + 2.0), left.center().y), vec2(TOGGLE, TOGGLE));
@@ -406,6 +419,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let kind = match layer.kind {
             LayerKind::Folder => "folder",
             LayerKind::Bone => "bone rig",
+            LayerKind::Switch => "switch layer",
             LayerKind::Mask => "mask layer",
             LayerKind::Guide => "guide layer",
             LayerKind::Camera => "camera layer",

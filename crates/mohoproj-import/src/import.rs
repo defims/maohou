@@ -184,7 +184,7 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
 
     // The inline layer tree, flattened (bottom-first in, top-first out).
     let mut flat: Vec<FlatLayer> = Vec::new();
-    let into = layer::Inherit { parent: None, hide: None };
+    let into = layer::Inherit { parent: None };
     layer::walk(&mut b, layers, &into, 0, &mut flat);
     let mut layers_out: Vec<_> = flat.into_iter().map(|f| Arc::new(f.layer)).collect();
     if layers_out.is_empty() {

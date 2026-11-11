@@ -11,9 +11,9 @@
 //! alpha and its effect stack stay on the folder layer itself, and evaluation renders its
 //! whole run as one group — so a transformed, faded or filtered group behaves as in Moho, and
 //! its children keep their own channels instead of baking their ancestors'. A container with
-//! none of those stays a pure organisational folder. A switch freezes at its current
-//! selection and keeps the variants as hidden children; bones and physics are counted in the
-//! report.
+//! none of those stays a pure organisational folder. A switch imports as a switch (ADR
+//! 0105): its `switch_keys` channel rides the layer and evaluation shows one variant per
+//! frame. Bones and physics are counted in the report.
 
 use crate::anim;
 use crate::channel::{self, Channel};
@@ -48,11 +48,9 @@ enum Content<'doc> {
 }
 
 /// What a layer inherits from its ancestors: where it sits in the tree (a container's
-/// children name it as their parent; evaluation chains its transform and effects), and the
-/// switch-variant names a parent froze out of view.
-pub(crate) struct Inherit<'a> {
+/// children name it as their parent; evaluation chains its transform and effects).
+pub(crate) struct Inherit {
     pub parent: Option<LayerId>,
-    pub hide: Option<&'a [String]>,
 }
 
 /// Walks Moho's layer array (bottom-first) into `out` (top-first, containers first).
@@ -76,7 +74,7 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
     let id = LayerId(b.doc.alloc_id());
     let mut l = Layer::new(id, name);
     l.parent = into.parent;
-    l.visible = layer_visibility(b, layer) && into.hide.is_none_or(|h| !h.contains(&l.name));
+    l.visible = layer_visibility(b, layer);
     // The layer's effect stack: opacity and the static filters (ADR 0103). Any layer kind
     // carries them in Moho.
     l.opacity = layer_opacity(b, layer);
@@ -130,31 +128,25 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
             finish_leaf(b, l, world, Content::Text(layer), parent_bone(layer), out);
         }
         "GroupLayer" | "BoneLayer" | "SwitchLayer" => {
-            l.kind = if ty == "BoneLayer" { LayerKind::Bone } else { LayerKind::Folder };
-            if ty == "BoneLayer" {
-                // The rig (ADR 0104): bones import now; a layer without bones stays a
-                // plain folder (Moho's Switch skeletons ride in the sidecar for stage 5).
-                l.skeleton = crate::bone::read_skeleton(b, get(layer, "skeleton"));
-                if l.skeleton.is_none() {
-                    l.kind = LayerKind::Folder;
+            l.kind = match ty.as_str() {
+                // The rig (ADR 0104): bones import now; a layer without bones stays a plain
+                // folder. A switch always imports as one (ADR 0105).
+                "BoneLayer" => {
+                    l.skeleton = crate::bone::read_skeleton(b, get(layer, "skeleton"));
+                    if l.skeleton.is_none() { LayerKind::Folder } else { LayerKind::Bone }
                 }
-            } else if ty == "SwitchLayer" {
-                count_skeleton(b, get(layer, "skeleton"));
-            }
+                "SwitchLayer" => {
+                    count_skeleton(b, get(layer, "skeleton"));
+                    read_switch(b, layer, &mut l);
+                    LayerKind::Switch
+                }
+                _ => LayerKind::Folder,
+            };
             count_layer_extras(b, layer);
             out.push(FlatLayer { layer: l });
             let kids = array(get(layer, "layers")).unwrap_or(&[]);
-            if ty == "SwitchLayer" {
-                // A switch freezes at its selection: everything but the selected variant hides.
-                let hide_kids = switch_hide(b, layer);
-                let mut combined: Vec<String> = into.hide.unwrap_or(&[]).to_vec();
-                combined.extend(hide_kids.unwrap_or_default());
-                let kids_into = Inherit { parent: Some(id), hide: (!combined.is_empty()).then_some(combined.as_slice()) };
-                walk(b, kids, &kids_into, depth + 1, out);
-            } else {
-                let kids_into = Inherit { parent: Some(id), hide: into.hide };
-                walk(b, kids, &kids_into, depth + 1, out);
-            }
+            let kids_into = Inherit { parent: Some(id) };
+            walk(b, kids, &kids_into, depth + 1, out);
         }
         "NoteLayer" => b.report.skip("note layers"),
         "ParticleLayer" => b.report.skip("particle layers"),
@@ -172,26 +164,23 @@ fn layer_visibility(b: &Builder, layer: &Value) -> bool {
     plain && channel.is_none_or(|c| channel::sample_bool(&c, b.frame).unwrap_or(true))
 }
 
-/// A switch freezes at its current selection: the selected variant stays visible, the rest
-/// hide (a stage-1 stand-in for the animated selector; the channel rides in the sidecar).
-fn switch_hide(b: &mut Builder, layer: &Value) -> Option<Vec<String>> {
-    let ch = get(layer, "switch_keys").and_then(Channel::parse)?;
-    if ch.is_animated() {
-        b.report.skip("switch layer animation (selection frozen)");
+/// A switch's selector (ADR 0105): Moho's `switch_keys` String channel moves over key for
+/// key — its frames are already 0-based, and a String channel always steps. The variants
+/// themselves stay ordinary child layers; evaluation shows the named one per frame. A
+/// cross-fade switch (`switch_interpolation`) or a frame-by-frame one has no slot yet and
+/// is counted; the sidecar keeps everything.
+fn read_switch(b: &mut Builder, layer: &Value, l: &mut Layer) {
+    if let Some(sk) = get(layer, "switch_keys") {
+        let mut sel = anicraft_doc::Channel::<String>::default();
+        anim::read_channel_value(&mut sel, sk, &mut b.report, 0, |ch, i| channel::sample_string_at(ch, i).unwrap_or_default());
+        l.switch_to = sel;
     }
-    let selected = channel::sample_string(&ch, b.frame)?;
-    if selected.is_empty() {
-        b.report.notes.push("switch layer without a selection keeps every variant visible".into());
-        return None;
+    if json::boolean(get(layer, "switch_interpolation")).unwrap_or(false) {
+        b.report.skip("switch cross-fades (the switch steps between variants)");
     }
-    b.report.skip(&format!("switch selection (frozen: {selected})"));
-    let names: Vec<String> = array(get(layer, "layers"))
-        .unwrap_or(&[])
-        .iter()
-        .filter_map(|l| json::string(get(l, "name")))
-        .filter(|n| *n != selected)
-        .collect();
-    Some(names)
+    if json::boolean(get(layer, "frame_by_frame")).unwrap_or(false) {
+        b.report.skip("frame-by-frame switches (variants shown by selection)");
+    }
 }
 
 /// Skeletons (and the smart-bone actions riding on them) arrive in a later milestone; the
@@ -465,7 +454,7 @@ fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<A
         name: String::new(),
         transform: b.to_px.mul(&world),
         color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new() }),
+        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }),
     }));
 }
 

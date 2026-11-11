@@ -17,7 +17,11 @@ pub const FORMAT_NAME: &str = "anicraft";
 /// rotation, shear, flips, origin pivot, camera_immune) and each scene's camera, timeline
 /// markers and playback frame range. All optional keys: older files read as before, with no
 /// layer transform and the plain unmoving camera.
-pub const FORMAT_VERSION: u32 = 7;
+/// v6: layer effect stacks and the named style table (ADR 0103).
+/// v7: skeletons and bone bindings (ADR 0104).
+/// v8: switch layers, per-point position channels and trims, text strokes (ADR 0105).
+/// All optional keys: older files read as before.
+pub const FORMAT_VERSION: u32 = 8;
 /// Largest file we will parse.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 /// Files smaller than this (compact) are pretty-printed for humans and diffs.

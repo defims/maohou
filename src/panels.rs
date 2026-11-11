@@ -490,7 +490,7 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
         }
         if let ElementKind::Text(t) = &e.kind {
             ui.add_space(4.0);
-            let mut st = anicraft_engine::cmds_text::TextStyle { font: t.font.clone(), size: t.size, bold: t.bold, italic: t.italic, color: t.color, align: t.align, letter_spacing: t.letter_spacing, line_spacing: t.line_spacing };
+            let mut st = anicraft_engine::cmds_text::TextStyle { font: t.font.clone(), size: t.size, bold: t.bold, italic: t.italic, color: t.color, align: t.align, letter_spacing: t.letter_spacing, line_spacing: t.line_spacing, stroke: t.stroke.clone() };
             let mut width = t.width;
             if let Some((label, p)) = text_style_rows(app, ui, &mut st, Some(&mut width)) {
                 live(app, label, "text.edit", p);
@@ -987,6 +987,32 @@ pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engin
             out = Some(("Line spacing", json!({"line_spacing": st.line_spacing})));
         }
     });
+    // The outline around the glyphs (Moho's text stroke). On: a width and a colour; off
+    // sends null so the edit removes the stroke.
+    row(ui, "Stroke", |ui| {
+        let mut on = st.stroke.is_some();
+        if crate::theme::checkbox(ui, &mut on, "Outline").on_hover_text("Draw a stroke along the glyph edges").changed() {
+            if on {
+                let w = st.stroke.as_ref().map_or(2.0, |s| s.width);
+                let c = st.stroke.as_ref().map_or(st.color, |s| s.color);
+                st.stroke = Some(anicraft_engine::doc::Stroke::new(c, w));
+                out = Some(("Text stroke", json!({"stroke_width": w, "stroke_color": hex(rgb(c))})));
+            } else {
+                st.stroke = None;
+                out = Some(("Text stroke", json!({"stroke_width": null})));
+            }
+        }
+        if let Some(s) = st.stroke.as_mut() {
+            let mut c = rgb(s.color);
+            if ui.color_edit_button_srgb(&mut c).named("Stroke colour").on_hover_text("Stroke colour").changed() {
+                s.color = Rgba::hex(u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]));
+                out = Some(("Stroke colour", json!({"stroke_color": hex(c)})));
+            }
+            if ui.add(egui::DragValue::new(&mut s.width).suffix(" px").speed(0.1).range(0.1..=1000.0).max_decimals(1)).named("Stroke width").changed() {
+                out = Some(("Stroke width", json!({"stroke_width": s.width})));
+            }
+        }
+    });
     if let Some(width) = width {
         row(ui, "Width", |ui| {
             let mut wrap = width.is_some();
@@ -1093,10 +1119,14 @@ fn frame_props(app: &mut App, ui: &mut egui::Ui, layer: &anicraft_engine::doc::L
         let n = tl.layers.iter().position(|l| l.id == layer.id).map_or(0, |i| tl.group_range(i).len().saturating_sub(1));
         let what = if n == 1 { "1 layer".to_string() } else { format!("{n} layers") };
         let bones = layer.skeleton.as_ref().map_or(0, |s| s.bones.len());
-        let rig = if layer.kind == anicraft_engine::doc::LayerKind::Bone {
-            format!("Bone rig · {} {} · {what}", bones, if bones == 1 { "bone" } else { "bones" })
-        } else {
-            format!("Folder · {what}")
+        let rig = match layer.kind {
+            anicraft_engine::doc::LayerKind::Bone => format!("Bone rig · {} {} · {what}", bones, if bones == 1 { "bone" } else { "bones" }),
+            anicraft_engine::doc::LayerKind::Switch => {
+                let at = app.s.frame;
+                let picked = layer.switch_selection(at).unwrap_or_else(|| "nothing".into());
+                format!("Switch · {what} · shows {}", if picked == "nothing" { picked } else { format!("“{picked}”") })
+            }
+            _ => format!("Folder · {what}"),
         };
         ui.label(text(Type::Label, rig));
         ui.label(text(Type::Caption, "Folders hold layers, not frames. Hiding or locking the folder hides or locks everything in it; move layers in under it with Up and Down."));
