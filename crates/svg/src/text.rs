@@ -289,6 +289,7 @@ impl<'a> Builder<'a> {
             line_spacing: 0.0,
             width: None,
             outline: Arc::new(layout.outline),
+            stroke: None,
             box_width: layout.width,
             box_height: layout.height,
         };

@@ -305,6 +305,7 @@ fn layer_type_json(s: &Session, id: LayerId) -> Value {
         LayerKind::Guide => "guide",
         LayerKind::Folder => "folder",
         LayerKind::Bone => "bone",
+        LayerKind::Switch => "switch",
         LayerKind::Camera => "camera",
         LayerKind::Normal if masked_by.is_some() => "masked",
         LayerKind::Normal if guided_by.is_some() => "guided",

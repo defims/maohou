@@ -160,7 +160,7 @@ pub(crate) fn remerge(s: &mut Session, parts: &[Part]) -> Option<(Vec<Arc<Elemen
             name: String::new(),
             transform: Affine::translate(c.x, c.y),
             color,
-            kind: ElementKind::Shape(Shape { path: Arc::new(piece.path.transformed(&Affine::translate(-c.x, -c.y))), fill, stroke, fill_rule: Default::default(), merge: true, bind: Vec::new() }),
+            kind: ElementKind::Shape(Shape { path: Arc::new(piece.path.transformed(&Affine::translate(-c.x, -c.y))), fill, stroke, fill_rule: Default::default(), merge: true, bind: Vec::new(), points: Vec::new(), trim: None }),
         }));
     }
     Some((out, picked))

@@ -465,7 +465,7 @@ fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<A
         name: String::new(),
         transform: b.to_px.mul(&world),
         color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new() }),
+        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }),
     }));
 }
 

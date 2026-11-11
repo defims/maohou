@@ -490,7 +490,7 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
         }
         if let ElementKind::Text(t) = &e.kind {
             ui.add_space(4.0);
-            let mut st = anicraft_engine::cmds_text::TextStyle { font: t.font.clone(), size: t.size, bold: t.bold, italic: t.italic, color: t.color, align: t.align, letter_spacing: t.letter_spacing, line_spacing: t.line_spacing };
+            let mut st = anicraft_engine::cmds_text::TextStyle { font: t.font.clone(), size: t.size, bold: t.bold, italic: t.italic, color: t.color, align: t.align, letter_spacing: t.letter_spacing, line_spacing: t.line_spacing, stroke: t.stroke.clone() };
             let mut width = t.width;
             if let Some((label, p)) = text_style_rows(app, ui, &mut st, Some(&mut width)) {
                 live(app, label, "text.edit", p);
@@ -985,6 +985,32 @@ pub fn text_style_rows(app: &mut App, ui: &mut egui::Ui, st: &mut anicraft_engin
         }
         if ui.add(egui::DragValue::new(&mut st.line_spacing).prefix("Lines ").suffix(" px").speed(0.1).range(-1000.0..=1000.0).max_decimals(1)).named("Line spacing").changed() {
             out = Some(("Line spacing", json!({"line_spacing": st.line_spacing})));
+        }
+    });
+    // The outline around the glyphs (Moho's text stroke). On: a width and a colour; off
+    // sends null so the edit removes the stroke.
+    row(ui, "Stroke", |ui| {
+        let mut on = st.stroke.is_some();
+        if crate::theme::checkbox(ui, &mut on, "Outline").on_hover_text("Draw a stroke along the glyph edges").changed() {
+            if on {
+                let w = st.stroke.as_ref().map_or(2.0, |s| s.width);
+                let c = st.stroke.as_ref().map_or(st.color, |s| s.color);
+                st.stroke = Some(anicraft_engine::doc::Stroke::new(c, w));
+                out = Some(("Text stroke", json!({"stroke_width": w, "stroke_color": hex(rgb(c))})));
+            } else {
+                st.stroke = None;
+                out = Some(("Text stroke", json!({"stroke_width": null})));
+            }
+        }
+        if let Some(s) = st.stroke.as_mut() {
+            let mut c = rgb(s.color);
+            if ui.color_edit_button_srgb(&mut c).named("Stroke colour").on_hover_text("Stroke colour").changed() {
+                s.color = Rgba::hex(u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]));
+                out = Some(("Stroke colour", json!({"stroke_color": hex(c)})));
+            }
+            if ui.add(egui::DragValue::new(&mut s.width).suffix(" px").speed(0.1).range(0.1..=1000.0).max_decimals(1)).named("Stroke width").changed() {
+                out = Some(("Stroke width", json!({"stroke_width": s.width})));
+            }
         }
     });
     if let Some(width) = width {

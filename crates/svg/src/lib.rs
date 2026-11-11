@@ -795,7 +795,7 @@ impl<'a> Builder<'a> {
                 if fill.is_none() && stroke.is_none() {
                     return;
                 }
-                let shape = Shape { path: Arc::new(path), fill, stroke, fill_rule: style.fill_rule, merge: false, bind: Vec::new() };
+                let shape = Shape { path: Arc::new(path), fill, stroke, fill_rule: style.fill_rule, merge: false, bind: Vec::new(), points: Vec::new(), trim: None };
                 self.items.push(Item { el: ImportedElement { name: name_of(el), transform: *m, alpha, kind: ElementKind::Shape(shape) }, clips: Vec::new() });
             }
         }

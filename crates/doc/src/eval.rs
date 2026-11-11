@@ -252,7 +252,9 @@ fn interpolate(a: &Element, b: &Element, t: f32, morph: bool, hints: &[(anicraft
                 (Some(x), Some(y)) => Some(x.lerp(y, t)),
                 (x, _) => x.clone(),
             };
-            ElementKind::Shape(Shape { path, fill, stroke, fill_rule: sa.fill_rule, merge: sa.merge, bind: Vec::new() })
+            // The point tracks and trim ride along: their channels sample by frame, so the
+            // tweened shape still animates its points the way the property channels say.
+            ElementKind::Shape(Shape { path, fill, stroke, fill_rule: sa.fill_rule, merge: sa.merge, bind: Vec::new(), points: sa.points.clone(), trim: sa.trim.clone() })
         }
         (ElementKind::Symbol { symbol: s1, .. }, ElementKind::Symbol { symbol: s2, .. }) if s1 == s2 => a.kind.clone(),
         // Text tweens its placement and colour effect; the words stay the first keyframe's.
@@ -427,16 +429,24 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
         }
     }
     // Folders draw nothing themselves, and a hidden folder hides everything in it.
-    let walk = Walk { clips: &clips, has_folders: tl.layers.iter().any(|l| l.kind.is_container()), inside: None, play };
+    let walk = Walk {
+        clips: &clips,
+        has_folders: tl.layers.iter().any(|l| l.kind.is_container()),
+        has_switches: tl.layers.iter().any(|l| l.kind == LayerKind::Switch),
+        inside: None,
+        play,
+    };
     eval_layers(doc, tl, frame, cx, 0..tl.layers.len(), &walk, out);
 }
 
 /// What a timeline walk needs beside the context: the precomputed mask clips, whether any
-/// folder exists (so hidden folders are checked at all), and the folder whose run this walk
-/// draws (`None` for the timeline's own pass).
+/// folder or switch exists (so hidden folders and unpicked variants are checked at all),
+/// and the folder whose run this walk draws (`None` for the timeline's own pass).
 struct Walk<'a> {
     clips: &'a [(LayerId, u32)],
     has_folders: bool,
+    /// Any switch layer exists, so variants are checked against their selector per frame.
+    has_switches: bool,
     inside: Option<LayerId>,
     /// The player state a symbol descent hands down (upstream's interactive player).
     play: Option<&'a Play<'a>>,
@@ -473,6 +483,12 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
         if !layer.visible || matches!(layer.kind, LayerKind::Camera) || (is_guide && cx.masks.is_some()) || (walk.has_folders && tl.hidden_by_folder(index)) {
             continue;
         }
+        // An enclosing switch shows exactly one branch: this layer draws only while every
+        // switch above it names the branch that leads here (ADR 0105). An unselected switch
+        // shows nothing.
+        if walk.has_switches && !tl.shows_through_switches(index, frame) {
+            continue;
+        }
         // A container (with or without semantics) inside a compositing run is that run's
         // container's business, not this pass's.
         if layer.kind.is_container() && drawn_by_folder(index) {
@@ -494,7 +510,7 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
                     group: Some(gid),
                     ..*cx
                 };
-                let run_walk = Walk { clips: walk.clips, has_folders: walk.has_folders, inside: Some(layer.id), play: walk.play };
+                let run_walk = Walk { clips: walk.clips, has_folders: walk.has_folders, has_switches: walk.has_switches, inside: Some(layer.id), play: walk.play };
                 eval_layers(doc, tl, frame, &inner, run.start + 1..run.end, &run_walk, out);
             }
             continue;
@@ -561,28 +577,43 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
             let group = layer_group.or(cx.group);
             match &el.kind {
                 ElementKind::Shape(s) => {
+                    // Animated points rebuild the path at this frame, and an active trim
+                    // cuts each subpath to its arc (ADR 0105); a trimmed shape draws its
+                    // stroke, the fill of a cut-open ring not being a shape any more.
+                    let (mut path, mut fill) = (s.path.clone(), s.fill.clone());
+                    if !s.points.is_empty() {
+                        path = crate::points::rebuild(&path, &s.points, frame).map(Arc::new).unwrap_or(path);
+                    }
+                    if let Some(cut) = s.trim.as_ref().and_then(|t| crate::points::trim(&path, t, frame)) {
+                        path = Arc::new(cut);
+                        fill = None;
+                    }
                     // Artwork bound to an enclosing bone layer's skeleton rides its bones
                     // (ADR 0104): one full-weight bone composes its matrix into the
                     // transform; several bones deform the path (linear blend skinning).
                     let (path, xf) = if s.bind.is_empty() {
-                        (s.path.clone(), xf)
+                        (path, xf)
                     } else {
                         let skins = skin_of(tl, index, frame);
                         match skins.as_deref() {
                             Some(skins) => match s.bind.as_slice() {
                                 [(b, w)] if (*w - 1.0).abs() < 1e-3 => {
                                     let m = skins.get(b.0 as usize).copied().unwrap_or(Affine::IDENTITY);
-                                    (s.path.clone(), layer_xf.mul(&m).mul(&el.transform))
+                                    (path, layer_xf.mul(&m).mul(&el.transform))
                                 }
-                                binds => (Arc::new(deform_path(&s.path, skins, binds, &el.transform)), layer_xf),
+                                binds => (Arc::new(deform_path(&path, skins, binds, &el.transform)), layer_xf),
                             },
-                            None => (s.path.clone(), xf),
+                            None => (path, xf),
                         }
+                    };
+                    let image = match &fill {
+                        Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
+                        _ => None,
                     };
                     out.items.push(DisplayItem {
                         path,
                         transform: xf,
-                        fill: s.fill.clone(),
+                        fill,
                         stroke: s.stroke.clone(),
                         fill_rule: s.fill_rule,
                         color,
@@ -593,28 +624,33 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
                         masks,
                         guide,
                         group,
-                        image: match &s.fill {
-                            Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
-                            _ => None,
-                        },
+                        image,
                     })
                 }
-                ElementKind::Text(t) => out.items.push(DisplayItem {
-                    path: t.outline.clone(),
-                    transform: xf,
-                    fill: Some(Paint::Solid(t.color)),
-                    stroke: None,
-                    fill_rule: FillRule::NonZero,
-                    color,
-                    layer: root_layer,
-                    element: root_el,
-                    outline: layer_outline,
-                    clip,
-                    masks,
-                    guide,
-                    group,
-                    image: None,
-                }),
+                ElementKind::Text(t) => {
+                    let text_item = |stroke: Option<Stroke>| DisplayItem {
+                        path: t.outline.clone(),
+                        transform: xf,
+                        fill: if stroke.is_none() { Some(Paint::Solid(t.color)) } else { None },
+                        stroke,
+                        fill_rule: FillRule::NonZero,
+                        color,
+                        layer: root_layer,
+                        element: root_el,
+                        outline: layer_outline,
+                        clip,
+                        masks,
+                        guide,
+                        group,
+                        image: None,
+                    };
+                    // The glyphs draw filled, and a stroked text draws its outline over the
+                    // fill, centred on the glyph edge (Moho's text stroke; ADR 0105).
+                    out.items.push(text_item(None));
+                    if let Some(st) = &t.stroke {
+                        out.items.push(text_item(Some(st.clone())));
+                    }
+                }
                 ElementKind::Camera => {}
                 ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, .. } => {
                     let Some(sym) = doc.symbol(*symbol) else { continue };

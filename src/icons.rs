@@ -66,11 +66,13 @@ pub enum Icon {
     Sound,
     SoundOff,
     Camera,
+    /// The variant stack a switch layer shows (the layers glyph; the Onion toggle shares it).
+    Layers,
 }
 
 impl Icon {
     #[cfg(test)]
-    pub const ALL: [Icon; 51] = [
+    pub const ALL: [Icon; 52] = [
         Icon::SoundOff,
         Icon::Camera,
         Icon::Width,
@@ -122,6 +124,7 @@ impl Icon {
         Icon::Unlock,
         Icon::ChevronRight,
         Icon::ChevronDown,
+        Icon::Layers,
     ];
 
     /// Drawn filled as well as outlined: the Selection arrow is solid, the Subselection arrow
@@ -155,6 +158,7 @@ impl Icon {
             Icon::Ink => ("droplet", false),
             Icon::Hand => ("hand", false),
             Icon::Bone => ("bone", false),
+            Icon::Layers => ("layers", false),
             Icon::Zoom => ("zoom-in", false),
             Icon::First => ("chevrons-left", false),
             Icon::Last => ("chevrons-right", false),
