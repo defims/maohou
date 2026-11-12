@@ -36,11 +36,22 @@ shape: `transforms.following` is a plain animated `Val` channel in curve percent
    curve may belong to no shape of its own (the corpus's S curve does not) — the importer
    adds it to the target layer's keyframe as a path with no fill and no stroke, draws
    nothing, and hands its element id to the relation.
-4. **Bending is kept and counted, not guessed.** `follow_bending` (the scripting API's
-   `bendWithCurve`) warps the artwork along the path in Moho; the vendor publishes no
-   algorithm and the corpus holds no bent specimen (the fixture's follower mesh is empty).
-   The flag rides the document; the audit counts "follow bending" until Moho runtime truth
-   exists — the risk register's rule: unprovable parameters stay beside, not rendered.
+4. **Bending is kept and counted, not guessed — and the count is machine-confirmed.**
+   `follow_bending` (the scripting API's `bendWithCurve`) warps the artwork along the path
+   in Moho; the vendor publishes no algorithm. The installed Moho Pro 14.4 has now shown
+   what it does (maop-corpus CASES #23, `follow-bend-on/off.moho` + 22 FileRender PNGs):
+   with bending off the `following` channel drives travel (every frame differs, rigid
+   placement along the curve); with bending on the layer's contents warp to conform along
+   the curve and the channel acts as a near-binary influence — following 1.0 renders the
+   layer at its authored place, any value below renders the conformed warp byte-identically
+   (frames 5–50 identical at values 0.92…0.0). The warp maps each shape along the curve
+   with tangent rotation; the attach point is not in the file — Moho recomputes it from the
+   layer's origin. AniCraft's percentage-travel evaluation matches Moho's bending-off mode
+   qualitatively but not the bending-on mode the corpus's fixture actually uses. Restoring
+   the warp means reverse-engineering that unpublished mapping; the ground truth renders are
+   archived in the corpus for a later stage to approximate against a real-machine gate.
+   Until then the flag rides the document and the audit counts "follow bending" — exactly
+   the risk register's rule: unprovable parameters stay beside, not rendered.
 
 ## Consequences
 
