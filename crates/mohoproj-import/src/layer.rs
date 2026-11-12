@@ -444,8 +444,11 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     if json::boolean(get(layer, "animated_layer_effects")).unwrap_or(false) {
         b.report.skip("animated layer effects");
     }
-    if json::integer(get(layer, "timing_offset")).is_some_and(|i| i != 0) {
-        b.report.skip("layer timing offsets");
+    // A timing offset on a content layer shifts its whole channel timeline; the audio
+    // layer's bar resolves in audio.rs instead. No corpus specimen shifts content, so it
+    // is counted until one does.
+    if json::integer(get(layer, "timing_offset")).unwrap_or(0) != 0 && layer_type(layer) != "AudioLayer" {
+        b.report.skip("layer timing offsets (their channels play shifted)");
     }
     if json::boolean(get(layer, "mask_expansion")).unwrap_or(false) {
         b.report.skip("mask expansion");

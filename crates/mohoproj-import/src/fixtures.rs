@@ -399,5 +399,9 @@ fn audio_track_fixture_becomes_a_keyframe_sound() {
     assert!(bounce.has_sounds());
     let snd = bounce.keyframes[0].sound.as_ref().unwrap();
     assert_eq!(snd.sync, anicraft_doc::SoundSync::Stream);
+    // Moho saved timing_offset -23 (the bar was imported at 1-based frame 24): the sound's
+    // keyframe starts at 0-based frame 23, exactly as Moho's sequencer shows it.
+    assert_eq!(bounce.keyframes[0].start, 23, "the audio bar starts where Moho placed it");
+    assert!(!report.skipped.iter().any(|(k, _)| k.contains("timing")), "the offset resolves: {:?}", report.skipped);
     assert!(!report.skipped.contains_key("missing audio files"), "{:?}", report.skipped);
 }
