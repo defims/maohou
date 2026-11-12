@@ -168,14 +168,13 @@ fn a_followed_layer_rides_the_target_curve() {
     tl.layers.clear(); // drop the default layer: its id would shadow the target's
     tl.layers.push(Arc::new(target));
     tl.layers.push(Arc::new(follower));
-    drop(tl);
     let at = |f: u32| -> (f32, f32, [f32; 6]) {
         let dl = evaluate(&d, f);
         let t = dl.items.iter().find(|i| i.element == ElementId(11)).expect("the rider draws").transform;
         (t.translation().x, t.translation().y, t.m)
     };
     // The rider sits at the path point its channel names, turned along the tangent.
-    let (x, y, m) = at(0);
+    let (x, y, _) = at(0);
     assert!(x.abs() < 1e-3 && y.abs() < 1e-3, "({x}, {y})");
     let (x, y, _) = at(50);
     assert!((x - 50.0).abs() < 0.5 && y.abs() < 0.5, "({x}, {y})");

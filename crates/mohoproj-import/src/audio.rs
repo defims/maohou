@@ -50,7 +50,7 @@ pub(crate) fn audio_layer(b: &mut Builder, layer: &Value, l: &mut Layer) {
     if timing > 0 {
         b.report.skip("layer timing offsets before the timeline (the sound head is cut off)");
     }
-    let start = (-(timing as i64)).clamp(0, (b.duration as i64 - 1).max(0)) as u32;
+    let start = (-timing).clamp(0, b.duration as i64 - 1).max(0) as u32;
     let frames = sound.movie_frames(b.doc.stage.fps).min(b.duration.saturating_sub(start)).max(1);
     let id = sound.id;
     b.doc.sounds.push(Arc::new(sound));

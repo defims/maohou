@@ -642,6 +642,7 @@ fn physics_worlds_bodies_and_baked_nudges_import() {
 /// Physics off (or no enabled group) leaves no world, and the non-held body options are
 /// counted.
 #[test]
+#[allow(clippy::approx_constant)] // Moho's own bytes carry 3.141593, its shortened π
 fn physics_off_or_unheld_options_report() {
     let mut root = minimal();
     root["layers"][0] = json!({
