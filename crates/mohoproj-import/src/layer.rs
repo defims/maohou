@@ -234,6 +234,12 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
     if let Some(u) = json::string(get(layer, "uuid")).filter(|u| !u.is_empty()) {
         b.uuids.insert(u, id);
     }
+    // The smart-bone action membership table: which rig actions the layer belongs to
+    // (the poses themselves ride the skeleton's channels; ADR 0104).
+    for a in array(get(layer, "actions")).unwrap_or(&[]) {
+        let Some(name) = json::string(get(a, "name")).filter(|n| !n.is_empty()) else { continue };
+        l.smart_actions.push(anicraft_doc::SmartActionRef { name, pose: json::integer(get(a, "pose")).unwrap_or(0) });
+    }
     l.visible = layer_visibility(b, layer) && !into.hidden;
     // The layer's effect stack: opacity and the static filters (ADR 0103). Any layer kind
     // carries them in Moho.
@@ -437,9 +443,6 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     }
     if ch("timeline_markers").is_some_and(|c| channel::sample_string(&c, frame).is_some_and(|s| !s.is_empty())) {
         b.report.skip("layer timeline markers");
-    }
-    if array(get(layer, "actions")).is_some_and(|a| !a.is_empty()) {
-        *b.report.skipped.entry("smart bone action references".into()).or_default() += 1;
     }
     if json::boolean(get(layer, "animated_layer_effects")).unwrap_or(false) {
         b.report.skip("animated layer effects");

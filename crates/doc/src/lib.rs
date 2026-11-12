@@ -968,6 +968,18 @@ pub struct Layer {
     /// its own transform alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follow: Option<FollowPath>,
+    /// The smart-bone actions the layer belongs to (Moho's per-layer `actions` reference
+    /// table): names matching the rig's dial-driven bone actions, each with Moho's pose
+    /// id. Membership records — the action poses themselves ride the skeleton's channels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub smart_actions: Vec<SmartActionRef>,
+}
+
+/// One entry of a layer's smart-bone action membership (Moho's `{name, pose}`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SmartActionRef {
+    pub name: String,
+    pub pose: i64,
 }
 
 /// One layer's follow-path relation (Moho's `follow_layer_uuid`/`follow_curve`/
@@ -1056,6 +1068,7 @@ impl PartialEq for Layer {
             && self.physics == o.physics
             && self.mask_draws == o.mask_draws
             && self.follow == o.follow
+            && self.smart_actions == o.smart_actions
     }
 }
 
@@ -1099,6 +1112,7 @@ impl Layer {
             physics: None,
             mask_draws: false,
             follow: None,
+            smart_actions: Vec::new(),
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by

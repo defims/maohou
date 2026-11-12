@@ -334,6 +334,14 @@ fn group_mask_imports_as_a_drawing_mask() {
     assert!(mask.mask_draws, "Moho's add-to-mask member draws itself");
     let pupil = tl.layers.iter().find(|l| l.name == "Pupil").expect("the pupil");
     assert_eq!(pupil.parent, Some(mask.id), "the pupil is the mask's child");
+    // Every rig layer carries the smart-bone action membership table (ADR 0104): the
+    // poses themselves ride the skeleton's channels, which stage 5 imports.
+    let rig = tl.layers.iter().find(|l| l.name == "CharRig").expect("the rig");
+    assert_eq!(rig.smart_actions, vec![
+        anicraft_doc::SmartActionRef { name: "Eyes_LR".into(), pose: 0 },
+        anicraft_doc::SmartActionRef { name: "Eyes_UD".into(), pose: 0 },
+    ], "the membership table rides the layer");
+    assert!(tl.layers.iter().all(|l| l.smart_actions.len() == 2), "every rig layer belongs to both actions");
 }
 
 /// physics-drop.moho (Moho Pro 14.4, CASES #20): Moho's real physics configuration —
