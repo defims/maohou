@@ -80,6 +80,12 @@ pub struct Tokens {
     /// after it (green); the defaults the onion menu can change. Also the ruler's markers.
     pub onion_past: Color32,
     pub onion_future: Color32,
+    /// A symbol's 9-slice guides while it is open for editing (ADR 0055), dashed over a light
+    /// underlay so they read on any artwork.
+    pub slice_guide: Color32,
+    /// A button's hit area (ADR 0057): laid over its other states while it is open for editing,
+    /// and over the movie in Test Movie's Show Hit Areas, at [`HIT_AREA_ALPHA`].
+    pub hit_area: Color32,
     /// Library symbol kinds.
     pub kind_graphic: Color32,
     pub kind_movie_clip: Color32,
@@ -148,6 +154,8 @@ pub const GRAPHITE: Tokens = Tokens {
     hint_end: Color32::from_rgb(0x4f, 0xe3, 0xa8),
     onion_past: Color32::from_rgb(0x4f, 0x8d, 0xff),
     onion_future: Color32::from_rgb(0x4c, 0xd0, 0x7d),
+    slice_guide: Color32::from_rgb(0xd9, 0x3c, 0xc4),
+    hit_area: Color32::from_rgb(0x1f, 0xc8, 0x8c),
     kind_graphic: Color32::from_rgb(0x22, 0xc7, 0xa9),
     kind_movie_clip: Color32::from_rgb(0x5a, 0x8f, 0xff),
     kind_button: Color32::from_rgb(0xff, 0xb5, 0x3d),
@@ -204,6 +212,8 @@ pub const HIGH_CONTRAST: Tokens = Tokens {
     hint_end: Color32::from_rgb(0x74, 0xff, 0xb0),
     onion_past: Color32::from_rgb(0x6f, 0xa8, 0xff),
     onion_future: Color32::from_rgb(0x5c, 0xf0, 0x9a),
+    slice_guide: Color32::from_rgb(0xff, 0x6e, 0xe6),
+    hit_area: Color32::from_rgb(0x3d, 0xff, 0xb0),
     kind_graphic: Color32::from_rgb(0x3d, 0xf0, 0xcf),
     kind_movie_clip: Color32::from_rgb(0x85, 0xad, 0xff),
     kind_button: Color32::from_rgb(0xff, 0xc8, 0x5c),
@@ -479,6 +489,25 @@ pub fn color(t: Type) -> Color32 {
     }
 }
 
+/// A menu title with its access key underlined (ADR 0064), as Windows and Linux show it while
+/// Alt is held or the menu bar has the keyboard. `at`: the character (not byte) to underline.
+pub fn access_key_label(s: &str, at: Option<usize>) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextFormat { font_id: font(Type::Body), color: Color32::PLACEHOLDER, ..Default::default() };
+    let marked = egui::TextFormat { underline: Stroke::new(1.0, T.text), ..plain.clone() };
+    let cut = |n: usize| s.char_indices().nth(n).map_or(s.len(), |(b, _)| b);
+    match at {
+        Some(i) if i < s.chars().count() => {
+            let (a, b) = (cut(i), cut(i + 1));
+            job.append(s.get(..a).unwrap_or(""), 0.0, plain.clone());
+            job.append(s.get(a..b).unwrap_or(""), 0.0, marked);
+            job.append(s.get(b..).unwrap_or(""), 0.0, plain);
+        }
+        _ => job.append(s, 0.0, plain),
+    }
+    job
+}
+
 /// Text in a role: font, size, colour (and weight for titles and headings).
 pub fn text(t: Type, s: impl Into<String>) -> egui::RichText {
     let rt = egui::RichText::new(s).font(font(t)).color(color(t));
@@ -635,4 +664,13 @@ pub fn to_rgba(c: Color32) -> anicraft_engine::doc::Rgba {
 pub fn to_color32(c: anicraft_engine::doc::Rgba) -> Color32 {
     let c = c.sanitized();
     Color32::from_rgba_unmultiplied((c.r * 255.0).round() as u8, (c.g * 255.0).round() as u8, (c.b * 255.0).round() as u8, (c.a * 255.0).round() as u8)
+}
+
+/// How strongly a button's hit area is laid over the artwork (ADR 0057): enough to see where the
+/// pointer finds the button, light enough to see the state under it.
+pub const HIT_AREA_ALPHA: f32 = 0.35;
+
+/// The tint and opacity a button's hit area is drawn in (ADR 0057).
+pub fn hit_area() -> (anicraft_engine::doc::Rgba, f32) {
+    (to_rgba(T.hit_area), HIT_AREA_ALPHA)
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Bitmap, BitmapId, Channel, Easing, Filter, Keyframe, Scene, Symbol, SymbolId, SymbolKind, TextureMap, Tween, TweenKind};
+use crate::{Bitmap, BitmapId, Channel, ColorEffect, Easing, Filter, Keyframe, Scene, Symbol, SymbolId, SymbolKind, TextureMap, Tween, TweenKind};
 use anicraft_geom::Vec2;
 
 fn shape_el(id: u64, x: f32) -> Element {
@@ -86,7 +86,7 @@ fn nested_symbols_compose_transforms_and_cycles_terminate() {
         },
     );
     tl.layers.push(Arc::new(layer));
-    d.library.push(Arc::new(Symbol { id: sid, name: "loop".into(), kind: SymbolKind::Graphic, linkage: None, timeline: tl }));
+    d.library.push(Arc::new(Symbol { id: sid, name: "loop".into(), kind: SymbolKind::Graphic, linkage: None, scale_grid_kept: None, scale_grid: None, timeline: tl }));
     push(
         layer0(&mut d),
         0,
@@ -94,7 +94,7 @@ fn nested_symbols_compose_transforms_and_cycles_terminate() {
             id: ElementId(60),
             name: String::new(),
             transform: Affine::translate(100.0, 0.0),
-            color: ColorEffect { alpha: 0.5, ..Default::default() },
+            color: ColorEffect::Alpha(0.5),
             kind: ElementKind::Symbol { symbol: sid, loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: Vec::new(), events: Vec::new() },
         },
     );
@@ -102,7 +102,7 @@ fn nested_symbols_compose_transforms_and_cycles_terminate() {
     assert_eq!(dl.items.len(), MAX_SYMBOL_DEPTH);
     assert_eq!(dl.items[0].transform.translation().x, 100.0);
     // The instance's opacity is its group's: it fades as one.
-    assert_eq!((dl.items[0].color.alpha, dl.effective_alpha(&dl.items[0])), (1.0, 0.5));
+    assert_eq!((dl.items[0].color.mul[3], dl.effective_alpha(&dl.items[0])), (1.0, 0.5));
     assert_eq!(dl.groups.len(), 1);
     assert!(dl.items.iter().all(|i| i.element == ElementId(60)));
 }
@@ -141,7 +141,7 @@ fn masks_inside_symbols_nest_in_the_instance_clip() {
     // The main timeline's masked layer holds an instance of a symbol that has its own mask.
     let mut d = mask_doc();
     let sid = SymbolId(99);
-    d.library.push(Arc::new(Symbol { id: sid, name: "masked inside".into(), kind: SymbolKind::Graphic, linkage: None, timeline: mask_doc().timeline(0).clone() }));
+    d.library.push(Arc::new(Symbol { id: sid, name: "masked inside".into(), kind: SymbolKind::Graphic, linkage: None, scale_grid_kept: None, scale_grid: None, timeline: mask_doc().timeline(0).clone() }));
     let inst = Element {
         id: ElementId(60),
         name: String::new(),
@@ -296,7 +296,7 @@ fn movie_clips_play_their_own_timeline_graphics_keep_step_buttons_hold_up() {
         })
         .collect();
     let mut d = Document::default();
-    d.library.push(Arc::new(Symbol { id: sid, name: "Clip".into(), kind: SymbolKind::MovieClip, linkage: None, timeline: Timeline { layers: vec![Arc::new(st)] } }));
+    d.library.push(Arc::new(Symbol { id: sid, name: "Clip".into(), kind: SymbolKind::MovieClip, linkage: None, scale_grid_kept: None, scale_grid: None, timeline: Timeline { layers: vec![Arc::new(st)] } }));
     // The same instance on two keyframes back to back (frames 0–4 and 5–11), moved on the second.
     let inst = |x: f32| Element {
         id: ElementId(60),
@@ -353,7 +353,7 @@ fn a_motion_tween_drives_each_property_on_its_own_curve() {
     let d = motion_doc();
     let at = |f| {
         let dl = evaluate(&d, f);
-        (dl.items[0].transform.translation().x, dl.items[0].color.alpha)
+        (dl.items[0].transform.translation().x, dl.items[0].color.mul[3])
     };
     assert_eq!(at(0), (0.0, 1.0));
     // X eases in over 0..12 (a quarter of the way at half time); alpha runs linearly over 0..23.
@@ -825,6 +825,7 @@ fn a_stroked_text_draws_its_fill_then_its_outline() {
         letter_spacing: 0.0,
         line_spacing: 0.0,
         width: None,
+        field: None,
         stroke: Some(Stroke::new(Rgba::WHITE, 2.0)),
         outline: Arc::new(Path::rect(0.0, 0.0, 10.0, 10.0)),
         box_width: 10.0,

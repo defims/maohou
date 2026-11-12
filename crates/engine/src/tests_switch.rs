@@ -146,6 +146,7 @@ fn stage5_fields_round_trip_through_the_native_format() {
         letter_spacing: 0.0,
         line_spacing: 0.0,
         width: None,
+        field: None,
         stroke: Some(Stroke::new(anicraft_doc::Rgba::WHITE, 3.0)),
         outline: Arc::new(anicraft_geom::Path::rect(0.0, 0.0, 20.0, 20.0)),
         box_width: 20.0,

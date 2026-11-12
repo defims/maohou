@@ -99,7 +99,7 @@ pub(crate) fn text_elements(b: &mut Builder, layer: &Value, world: Affine, out: 
         line_spacing: 0.0,
         width: None,
         outline: Arc::new(layout.outline),
-        stroke: None,
+        field: None, stroke: None,
         box_width: layout.width,
         box_height: layout.height,
     };

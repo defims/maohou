@@ -53,6 +53,64 @@ pub fn system_locale() -> Option<String> {
     sys_locale::get_locale().filter(|l| !l.is_empty() && l.len() <= 64)
 }
 
+/// Whether the system asks for more contrast (ADR 0064): Windows' contrast themes (high
+/// contrast), macOS' Increase Contrast, the desktop portal's contrast setting on Linux (GNOME's
+/// High Contrast where there is no portal), the browser's `prefers-contrast: more`. `None`:
+/// this system doesn't say. Can block for a moment (it may ask another process): call it off
+/// the UI thread.
+pub fn system_high_contrast() -> Option<bool> {
+    #[cfg(windows)]
+    {
+        // HIGHCONTRAST's flags as the system keeps them; bit 0 is HCF_HIGHCONTRASTON.
+        let key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).open_subkey(r"Control Panel\Accessibility\HighContrast").ok()?; // i18n-exempt: a registry path
+        let flags: String = key.get_value("Flags").ok()?; // i18n-exempt: a registry value name
+        flags.trim().parse::<u32>().ok().map(|f| f & 1 == 1)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // Missing until the user first changes it: off.
+        let out = std::process::Command::new("defaults").args(["read", "com.apple.universalaccess", "increaseContrast"]).output().ok()?; // i18n-exempt: a command line
+        Some(String::from_utf8_lossy(&out.stdout).trim() == "1")
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()?.match_media("(prefers-contrast: more)").ok()??.matches().into() // i18n-exempt: a media query
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_arch = "wasm32")))]
+    {
+        portal_contrast().or_else(gnome_high_contrast)
+    }
+}
+
+/// The XDG desktop portal's `org.freedesktop.appearance contrast` (1: high), through `gdbus`.
+#[cfg(not(any(windows, target_os = "macos", target_arch = "wasm32")))]
+fn portal_contrast() -> Option<bool> {
+    let out = std::process::Command::new("gdbus") // i18n-exempt: a command line
+        .args(["call", "--session", "--timeout", "1", "--dest", "org.freedesktop.portal.Desktop", "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.portal.Settings.ReadOne", "org.freedesktop.appearance", "contrast"]) // i18n-exempt: a command line
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    parse_portal_uint(&String::from_utf8_lossy(&out.stdout)).map(|v| v == 1)
+}
+
+/// GNOME's own switch, for desktops without the portal setting.
+#[cfg(not(any(windows, target_os = "macos", target_arch = "wasm32")))]
+fn gnome_high_contrast() -> Option<bool> {
+    let out = std::process::Command::new("gsettings").args(["get", "org.gnome.desktop.a11y.interface", "high-contrast"]).output().ok().filter(|o| o.status.success())?; // i18n-exempt: a command line
+    match String::from_utf8_lossy(&out.stdout).trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// The number in a `gdbus` reply such as `(<<uint32 1>>,)` or `(<uint32 0>,)`.
+#[cfg_attr(any(windows, target_os = "macos", target_arch = "wasm32"), allow(dead_code))]
+fn parse_portal_uint(reply: &str) -> Option<u32> {
+    let rest = reply.split("uint32").nth(1)?;
+    rest.trim_start().split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+}
+
 /// Whether the active fonts can draw ⌘ ⇧ ⌥ ⌃ (set once fonts are installed).
 static MAC_GLYPHS: AtomicBool = AtomicBool::new(false);
 
@@ -67,6 +125,12 @@ pub fn set_web_on_mac(mac: bool) {
 /// Whose conventions shortcut labels follow: the OS's, or in a browser the computer's under it.
 fn keys_os() -> Os {
     if OS == Os::Web && WEB_ON_MAC.load(Ordering::Relaxed) { Os::Mac } else { OS }
+}
+
+/// Whether Alt and F10 reach the menu bar (ADR 0064): on Windows, Linux and the web, as their
+/// applications do, but not on a Mac (in a browser or not), whose menu conventions differ.
+pub fn menu_bar_keys() -> bool {
+    keys_os() != Os::Mac
 }
 
 pub fn set_mac_glyphs(available: bool) {
@@ -145,6 +209,51 @@ pub fn settings_place() -> String {
     config_dir().map_or_else(|| tr!("memory only").to_string(), |d| d.display().to_string())
 }
 
+/// The saved preferences (JSON): `prefs.json` in the settings folder, or browser storage.
+pub fn load_settings() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::storage_get(crate::web::PREFS_KEY);
+    #[cfg(not(target_arch = "wasm32"))]
+    config_dir().and_then(|d| std::fs::read_to_string(d.join("prefs.json")).ok())
+}
+
+/// Saves the preferences; on disk atomically (temp file + rename).
+pub fn save_settings(json: &str) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::storage_set(crate::web::PREFS_KEY, json);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = config_dir().ok_or(tr!("no settings folder on this system"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let (path, tmp) = (dir.join("prefs.json"), dir.join("prefs.json.tmp"));
+        std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    }
+}
+
+/// A recent file's start-screen picture (ADR 0059): `Thumbnails/<key>.png` in the settings
+/// folder, or browser storage on the web. `None` when there is none yet.
+pub fn load_thumbnail(key: &str) -> Option<Vec<u8>> {
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::storage_get(&format!("anicraft.thumb.{key}")).and_then(|t| anicraft_engine::doc::base64_decode(&t));
+    #[cfg(not(target_arch = "wasm32"))]
+    config_dir().and_then(|d| std::fs::read(d.join("Thumbnails").join(format!("{key}.png"))).ok()) // i18n-exempt: a folder name
+}
+
+/// Keeps a recent file's picture (a small PNG) for the start screen.
+pub fn save_thumbnail(key: &str, png: &[u8]) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::storage_set(&format!("anicraft.thumb.{key}"), &anicraft_engine::doc::base64_encode(png));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = config_dir().ok_or(tr!("no settings folder on this system"))?.join("Thumbnails"); // i18n-exempt: a folder name
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let (path, tmp) = (dir.join(format!("{key}.png")), dir.join(format!("{key}.png.tmp")));
+        std::fs::write(&tmp, png).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    }
+}
+
 /// The system's CJK-capable sans face, for interface text in Chinese (the bundled Latin
 /// typefaces don't cover hanzi). Read at runtime from the OS install and never bundled, like
 /// the user fonts of Preferences (so its licence never binds the distribution): the first
@@ -152,6 +261,7 @@ pub fn settings_place() -> String {
 /// browser's fonts cover it.
 pub fn cjk_fallback_font() -> Option<(String, Vec<u8>, u32)> {
     let home = |sub: &[&str]| std::env::var_os("HOME").map(|h| sub.iter().fold(PathBuf::from(h), |p, s| p.join(s)));
+    // i18n-exempt (the rest of this block): system font file paths
     let candidates: Vec<(PathBuf, u32)> = match OS {
         Os::Mac => [
             ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), // i18n-exempt: a system font file path
@@ -185,28 +295,6 @@ pub fn cjk_fallback_font() -> Option<(String, Vec<u8>, u32)> {
     None
 }
 
-/// The saved preferences (JSON): `prefs.json` in the settings folder, or browser storage.
-pub fn load_settings() -> Option<String> {
-    #[cfg(target_arch = "wasm32")]
-    return crate::web::storage_get(crate::web::PREFS_KEY);
-    #[cfg(not(target_arch = "wasm32"))]
-    config_dir().and_then(|d| std::fs::read_to_string(d.join("prefs.json")).ok())
-}
-
-/// Saves the preferences; on disk atomically (temp file + rename).
-pub fn save_settings(json: &str) -> Result<(), String> {
-    #[cfg(target_arch = "wasm32")]
-    return crate::web::storage_set(crate::web::PREFS_KEY, json);
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let dir = config_dir().ok_or(tr!("no settings folder on this system"))?;
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let (path, tmp) = (dir.join("prefs.json"), dir.join("prefs.json.tmp"));
-        std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
-    }
-}
-
 /// Why this build can't run `cmd`, if it can't: a web page can't spare the video encode or keep files in
 /// a folder of the computer (ADR 0036). The desktop app runs everything.
 pub fn unavailable(cmd: &str) -> Option<&'static str> {
@@ -214,9 +302,23 @@ pub fn unavailable(cmd: &str) -> Option<&'static str> {
         return None;
     }
     match cmd {
-        "file.export_video" => Some(tr_noop!("Video export needs the desktop app: in a browser export an animated GIF, a PNG sequence or an HTML page")),
+        "file.export_video" => Some(tr_noop!("Video export runs ffmpeg, which a web browser can't start: use the desktop app, or export an animated GIF or a PNG sequence")),
         "plugin.install" | "plugin.remove" | "plugin.reload" => Some(tr_noop!("Plug-ins are installed into a folder on your computer: use the desktop app")),
+        "file.save_as_template" => Some(tr_noop!("Your templates are kept in a folder on your computer: use the desktop app (the built-in templates work here)")),
         _ => None,
+    }
+}
+
+/// Where the user's templates live (ADR 0065): `Templates` in the settings folder, one folder
+/// per category. `ANICRAFT_TEMPLATES_DIR` points it elsewhere (tests, screenshots, portable
+/// installs). None in a browser, which has no folders to keep them in.
+pub fn templates_dir() -> Option<PathBuf> {
+    if WEB {
+        return None;
+    }
+    match std::env::var_os("ANICRAFT_TEMPLATES_DIR").filter(|v| !v.is_empty()) {
+        Some(d) => Some(PathBuf::from(d)),
+        None => config_dir().map(|d| d.join("Templates")), // i18n-exempt: a folder name
     }
 }
 
@@ -242,6 +344,16 @@ pub fn viewport(b: egui::ViewportBuilder) -> egui::ViewportBuilder {
     }
 }
 
+/// Another window of the app (Test Movie, ADR 0062): the same app id, so docks and taskbars group
+/// it with the editor, and the same icon. Native frames everywhere (the editor's unified macOS
+/// title bar is for its menu row, which this window doesn't have).
+pub fn secondary_window(b: egui::ViewportBuilder) -> egui::ViewportBuilder {
+    #[cfg(not(target_arch = "wasm32"))]
+    return b.with_app_id(APP_ID).with_icon(app_icon());
+    #[cfg(target_arch = "wasm32")]
+    b
+}
+
 /// The window, Dock, taskbar and app-switcher icon (`assets/app-icon/`, see its README). macOS gets
 /// the tile on Apple's grid (with its transparent margin); elsewhere the full-bleed tile.
 #[cfg(not(target_arch = "wasm32"))]
@@ -256,6 +368,181 @@ fn app_icon() -> egui::IconData {
 /// Space left of the menu row for the macOS traffic-light buttons.
 pub fn menu_inset() -> f32 {
     if OS == Os::Mac { 72.0 } else { 0.0 }
+}
+
+// ----- more than one window (ADR 0062) ---------------------------------------------------------
+
+/// Where Test Movie plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MovieHost {
+    /// A window of its own on the desktop (an egui immediate viewport).
+    Window,
+    /// A floating window inside the editor, and why.
+    Inside(Inside),
+}
+
+/// Why Test Movie plays inside the editor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Inside {
+    /// Preferences › Test Movie says so.
+    Chosen,
+    /// A web page has one window (ADR 0036).
+    WebPage,
+    /// The windowing layer can't open another window here.
+    NoWindows,
+}
+
+impl Inside {
+    /// What the floating window says about it (English: translated where it is shown); nothing
+    /// when the user chose it.
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Inside::Chosen => None,
+            Inside::WebPage => Some(tr_noop!("Inside the editor: a web page can't open a window of its own")),
+            Inside::NoWindows => Some(tr_noop!("Inside the editor: this system can't open another window for it")),
+        }
+    }
+}
+
+/// Where Test Movie plays, given whether egui embeds viewports (eframe sets that on the web and
+/// wherever it has no multi-window support) and the user's choice.
+pub fn movie_host(embed_viewports: bool, own_window: bool) -> MovieHost {
+    movie_host_for(OS, embed_viewports, own_window)
+}
+
+pub fn movie_host_for(os: Os, embed_viewports: bool, own_window: bool) -> MovieHost {
+    if os == Os::Web {
+        MovieHost::Inside(Inside::WebPage)
+    } else if embed_viewports {
+        MovieHost::Inside(Inside::NoWindows)
+    } else if !own_window {
+        MovieHost::Inside(Inside::Chosen)
+    } else {
+        MovieHost::Window
+    }
+}
+
+/// Whether AniCraft can put a window back where it was. Wayland never tells an app where its
+/// windows are, nor lets it place them: the desktop does.
+pub fn window_positions() -> bool {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    window_positions_for(OS, env("WAYLAND_DISPLAY").is_some(), env("WINIT_UNIX_BACKEND").as_deref())
+}
+
+/// winit picks Wayland when `WAYLAND_DISPLAY` is set, unless `WINIT_UNIX_BACKEND=x11`.
+pub fn window_positions_for(os: Os, wayland_display: bool, winit_backend: Option<&str>) -> bool {
+    match os {
+        Os::Linux | Os::Other => !wayland_display || winit_backend.is_some_and(|b| b.eq_ignore_ascii_case("x11")),
+        Os::Web => false,
+        Os::Mac | Os::Windows => true,
+    }
+}
+
+/// A remembered window corner, if it can still be used: finite, and on or beside the screen the
+/// editor is on (a monitor to its left or right is fine; a window lost far off-screen isn't).
+pub fn usable_position(at: [f32; 2], monitor: Option<egui::Vec2>) -> Option<egui::Pos2> {
+    let [x, y] = at;
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    let m = monitor.filter(|m| m.x > 0.0 && m.y > 0.0).unwrap_or(egui::vec2(16384.0, 16384.0));
+    let ok = x >= -m.x && x <= 2.0 * m.x - 64.0 && y >= -m.y && y <= 2.0 * m.y - 64.0;
+    ok.then(|| egui::pos2(x, y))
+}
+
+// ----- documents the system asks AniCraft to open (ADR 0062) ------------------------------------
+
+/// Something the system asked of the running app, outside its windows.
+// Only macOS hands documents to a running app; elsewhere the tests make requests.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SystemRequest {
+    /// Open these files (macOS: a double-click in Finder, a drop on the Dock icon, Open With).
+    Open(Vec<PathBuf>),
+    /// Quit (macOS: the Dock's Quit, logging out): through the unsaved-changes guard.
+    Quit,
+}
+
+thread_local! {
+    /// Requests not yet handled. Filled on the main thread (AppKit calls back there), read by
+    /// the frame on the same thread.
+    static REQUESTS: std::cell::RefCell<Vec<SystemRequest>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Most requests kept between two frames (a flood of Apple Events can't grow memory).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MAX_REQUESTS: usize = 64;
+
+/// Queues a request for the next frame.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn push_request(r: SystemRequest) {
+    REQUESTS.with(|q| {
+        let mut q = q.borrow_mut();
+        if q.len() < MAX_REQUESTS {
+            q.push(r);
+        }
+    });
+}
+
+/// The requests that arrived since the last frame, in order.
+pub fn take_requests() -> Vec<SystemRequest> {
+    #[cfg(target_os = "macos")]
+    MAC_INBOX.with(|i| {
+        if let Some(inbox) = i.borrow().as_ref() {
+            for e in inbox.drain() {
+                push_request(match e {
+                    fmv_macos_events::Event::Open(paths) => SystemRequest::Open(paths),
+                    fmv_macos_events::Event::Quit => SystemRequest::Quit,
+                });
+            }
+        }
+    });
+    REQUESTS.with(|q| std::mem::take(&mut *q.borrow_mut()))
+}
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static MAC_INBOX: std::cell::RefCell<Option<fmv_macos_events::Inbox>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Listens for documents the system hands over while AniCraft runs. Keep the result until the
+/// event loop returns. On macOS it must start before the event loop does, so the document that
+/// launched the app (sent as an Apple Event, not on the command line) isn't missed. Windows and
+/// Linux pass that document on the command line (`main`), and a second document starts a second
+/// AniCraft, so there is nothing to listen for there.
+pub struct DocumentListener {
+    #[cfg(target_os = "macos")]
+    _registration: fmv_macos_events::Registration,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn listen_for_documents() -> DocumentListener {
+    #[cfg(target_os = "macos")]
+    {
+        let (registration, inbox) = fmv_macos_events::Registration::install();
+        MAC_INBOX.with(|i| *i.borrow_mut() = Some(inbox));
+        DocumentListener { _registration: registration }
+    }
+    #[cfg(not(target_os = "macos"))]
+    DocumentListener {}
+}
+
+/// A request that arrives while the app is idle wakes it.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn wake_on_requests(ctx: &egui::Context) {
+    #[cfg(target_os = "macos")]
+    MAC_INBOX.with(|i| {
+        if let Some(inbox) = i.borrow().as_ref() {
+            let ctx = ctx.clone();
+            inbox.set_wake(move || ctx.request_repaint());
+        }
+    });
+}
+
+/// Arguments the system adds that aren't files: macOS before 10.9 passed `-psn_0_12345` (the
+/// process serial number) to apps started from Finder.
+pub fn is_system_argument(arg: &str) -> bool {
+    arg.starts_with("-psn_")
 }
 
 /// Renderer requested by `--renderer` / `ANICRAFT_RENDERER` (`wgpu` or `gl`), if any.
@@ -277,11 +564,13 @@ pub fn filters(cmd: &str) -> (&'static str, &'static [&'static str]) {
     match cmd {
         "file.export_png" => (tr_noop!("PNG image"), &["png"]),
         "file.export_gif" => (tr_noop!("Animated GIF"), &["gif"]),
+        "file.export_apng" => (tr_noop!("Animated PNG"), &["png", "apng"]),
+        "file.export_webp" => (tr_noop!("Animated WebP"), &["webp"]),
         "file.export_svg" => (tr_noop!("SVG image"), &["svg"]),
         "file.export_lottie" => (tr_noop!("Lottie animation"), &["json"]),
         "file.export_html" => (tr_noop!("Web page"), &["html", "htm"]),
         "file.import" => (tr_noop!("Drawing, image or sound"), &["svg", "png", "jpg", "jpeg", "wav", "ogg", "mp3"]),
-        "file.import_to_library" => (tr_noop!("Sound or image"), &["wav", "ogg", "mp3", "png", "jpg", "jpeg"]),
+        "file.import_to_library" => (tr_noop!("Sound, image or drawing"), &["wav", "ogg", "mp3", "png", "jpg", "jpeg", "svg"]),
         "file.export_audio" => (tr_noop!("WAV sound"), &["wav"]),
         "file.export_sprite_sheet" => (tr_noop!("PNG sprite sheet"), &["png"]),
         "file.export_video" => (tr_noop!("Video (WebM or MP4)"), &["webm", "mp4"]),
@@ -375,6 +664,71 @@ mod tests {
         for os in [Os::Windows, Os::Linux] {
             assert_eq!(shortcut_label_for(os, "Ctrl+Shift+Z", true), "Ctrl+Shift+Z");
         }
+    }
+
+    /// Test Movie gets a window of its own wherever the windowing layer can make one and the user
+    /// wants it; elsewhere it floats inside the editor and says why (ADR 0062).
+    #[test]
+    fn test_movie_falls_back_inside_the_editor_and_says_why() {
+        for os in [Os::Windows, Os::Mac, Os::Linux] {
+            assert_eq!(movie_host_for(os, false, true), MovieHost::Window, "{os:?}");
+            assert_eq!(movie_host_for(os, false, false), MovieHost::Inside(Inside::Chosen));
+            assert_eq!(movie_host_for(os, true, true), MovieHost::Inside(Inside::NoWindows));
+        }
+        // A web page never has a second window, whatever egui or the preference say.
+        assert_eq!(movie_host_for(Os::Web, false, true), MovieHost::Inside(Inside::WebPage));
+        assert!(Inside::Chosen.note().is_none(), "the user's own choice needs no explaining");
+        assert!(Inside::WebPage.note().is_some_and(|n| n.contains("web page")) && Inside::NoWindows.note().is_some());
+        // eframe embeds viewports where it can't open windows (the web, a headless context).
+        assert!(egui::Context::default().embed_viewports());
+    }
+
+    #[test]
+    fn wayland_hides_window_positions() {
+        assert!(window_positions_for(Os::Windows, false, None) && window_positions_for(Os::Mac, true, None));
+        assert!(window_positions_for(Os::Linux, false, None), "X11");
+        assert!(!window_positions_for(Os::Linux, true, None), "Wayland");
+        assert!(window_positions_for(Os::Linux, true, Some("X11")), "XWayland, chosen");
+        assert!(!window_positions_for(Os::Web, false, None));
+    }
+
+    #[test]
+    fn a_remembered_place_is_used_only_where_the_window_can_be_seen() {
+        let monitor = Some(egui::vec2(1920.0, 1080.0));
+        assert_eq!(usable_position([100.0, 80.0], monitor), Some(egui::pos2(100.0, 80.0)));
+        assert!(usable_position([-1500.0, 100.0], monitor).is_some(), "a monitor to the left");
+        assert!(usable_position([2500.0, 100.0], monitor).is_some(), "a monitor to the right");
+        assert_eq!(usable_position([90_000.0, 0.0], monitor), None, "lost far off-screen");
+        assert_eq!(usable_position([f32::NAN, 0.0], monitor), None);
+        assert!(usable_position([3000.0, 10.0], None).is_some(), "without the screen's size, a broad check");
+    }
+
+    #[test]
+    fn system_requests_arrive_in_order_and_are_bounded() {
+        assert!(take_requests().is_empty());
+        push_request(SystemRequest::Open(vec![PathBuf::from("a.anicraft")]));
+        push_request(SystemRequest::Quit);
+        assert_eq!(take_requests(), vec![SystemRequest::Open(vec![PathBuf::from("a.anicraft")]), SystemRequest::Quit]);
+        assert!(take_requests().is_empty(), "each is handled once");
+        for _ in 0..1000 {
+            push_request(SystemRequest::Quit);
+        }
+        assert_eq!(take_requests().len(), MAX_REQUESTS);
+        assert!(is_system_argument("-psn_0_8194") && !is_system_argument("walk.anicraft"));
+    }
+
+    #[test]
+    fn portal_replies_parse() {
+        assert_eq!(parse_portal_uint("(<<uint32 1>>,)"), Some(1));
+        assert_eq!(parse_portal_uint("(<uint32 0>,)
+"), Some(0));
+        assert_eq!(parse_portal_uint("Error: no such key"), None);
+    }
+
+    #[test]
+    fn the_system_contrast_setting_can_be_read_without_panicking() {
+        // Whatever this machine says (or doesn't), asking never fails loudly.
+        let _ = system_high_contrast();
     }
 
     #[test]
