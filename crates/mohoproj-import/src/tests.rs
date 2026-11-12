@@ -659,6 +659,19 @@ fn physics_off_or_unheld_options_report() {
     let body = thing.physics.expect("the body imports even without a world");
     assert!(body.static_body);
     assert!(report.skipped.contains_key("physics density ratios (bodies weigh the same)"), "{:?}", report.skipped);
-    assert!(report.skipped.contains_key("physics motors"), "{:?}", report.skipped);
+    assert!(report.skipped.contains_key("physics motors (the body does not spin)"), "{:?}", report.skipped);
+    // Moho's constant default motor keys (the same value at two frames, motor off) are
+    // not a motor: the corpus bodies carry them and import uncounted.
+    let mut constant = minimal();
+    constant["layers"][0] = json!({
+        "type": "GroupLayer", "name": "Plain",
+        "layers": [{
+            "type": "MeshLayer", "name": "Coasting",
+            "physics": {"enabled": true, "enable_motor": false, "motor_speed": channel("Val", vec![0, 167], vec![json!(3.141593), json!(3.141593)]), "motor_torque": 10000.0},
+            "mesh": {"points": [], "curves": [], "shapes": []}
+        }]
+    });
+    let (_, constant_report) = import(&constant);
+    assert!(!constant_report.skipped.keys().any(|k| k.contains("motor")), "an off motor with constant keys is not a motor: {:?}", constant_report.skipped);
     assert!(report.skipped.contains_key("physics body options (sleep, respawn, pivot)"), "{:?}", report.skipped);
 }

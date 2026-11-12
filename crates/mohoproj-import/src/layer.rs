@@ -471,8 +471,17 @@ fn read_physics_body(b: &mut Builder, layer: &Value) -> Option<anicraft_doc::Phy
         return None;
     }
     let ch = |k: &str| get(ph, k).and_then(Channel::parse);
-    if ch("motor_speed").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "enable_motor")).unwrap_or(false) {
-        b.report.skip("physics motors");
+    // Moho writes constant default motor keys on every body (the corpus's two keys carry
+    // the same π with the motor off): a motor matters only when it is on or its speed
+    // genuinely varies over time.
+    let motor_varies = ch("motor_speed").is_some_and(|c| {
+        c.is_animated()
+            && c.val().first().and_then(|v| json::num(Some(v))).is_some_and(|first| {
+                !c.val().iter().all(|v| json::num(Some(v)).is_some_and(|v| (v - first).abs() < 1e-9))
+            })
+    });
+    if json::boolean(get(ph, "enable_motor")).unwrap_or(false) || motor_varies {
+        b.report.skip("physics motors (the body does not spin)");
     }
     if ch("force_field_vector").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "force_field")).unwrap_or(false) {
         b.report.skip("physics force fields");
