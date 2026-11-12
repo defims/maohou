@@ -962,6 +962,37 @@ pub struct Layer {
     /// Off — the AniCraft default — the mask's fills are invisible and only clip.
     #[serde(default, skip_serializing_if = "is_false")]
     pub mask_draws: bool,
+    /// The layer rides a curve of another layer (Moho's Follow Path; ADR 0109): evaluation
+    /// places it at the path point the `following` channel names, turned along the path
+    /// when [`FollowPath::rotate`] is on. `None` — Moho's default — places the layer by
+    /// its own transform alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<FollowPath>,
+}
+
+/// One layer's follow-path relation (Moho's `follow_layer_uuid`/`follow_curve`/
+/// `rotate_to_follow`/`transforms.following`; ADR 0109).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FollowPath {
+    /// The layer whose curve is followed (in the same timeline).
+    pub target: LayerId,
+    /// The followed curve: the importer resolved Moho's mesh curve index into this
+    /// element's shape — an invisible path it adds to the target when the curve belongs
+    /// to no shape of its own.
+    pub element: ElementId,
+    /// Which subpath of that element's shape the curve flattened into.
+    pub subpath: usize,
+    /// Position along the path, in Moho's curve percentage (0 = the curve's first point,
+    /// 100 = its last; animated — the layer rides the path over time).
+    pub following: Channel<f32>,
+    /// The layer turns with the path's tangent (Moho's rotate to follow).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub rotate: bool,
+    /// The artwork bends along the path too (Moho's bend with curve). Kept, counted at
+    /// import; bending itself is not rendered yet — the vendor publishes no algorithm
+    /// and the corpus has no bent specimen.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub bending: bool,
 }
 
 fn is_zero2(v: &Vec2) -> bool {
@@ -1023,6 +1054,8 @@ impl PartialEq for Layer {
             && self.skeleton == o.skeleton
             && self.switch_to == o.switch_to
             && self.physics == o.physics
+            && self.mask_draws == o.mask_draws
+            && self.follow == o.follow
     }
 }
 
@@ -1065,6 +1098,7 @@ impl Layer {
             armature: None,
             physics: None,
             mask_draws: false,
+            follow: None,
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by

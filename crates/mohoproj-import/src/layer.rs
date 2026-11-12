@@ -17,12 +17,13 @@
 
 use crate::anim;
 use crate::channel::{self, Channel};
-use crate::import::{Builder, MOHO_DPI};
+use crate::import::{Builder, FollowRequest, MOHO_DPI};
+use anicraft_doc::{ColorEffect, Shape};
 use crate::json::{self, array, get};
 use crate::{audio, image, mesh};
 use crate::text;
 use anicraft_doc::{Element, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind};
-use anicraft_geom::Affine;
+use anicraft_geom::{Affine, FillRule};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -163,12 +164,76 @@ fn is_container(layer: &Value) -> bool {
     matches!(layer_type(layer).as_str(), "GroupLayer" | "BoneLayer" | "SwitchLayer")
 }
 
+/// Resolves the Follow Path relations seen during the walk (ADR 0109): the followed curve
+/// flattens onto its target layer as an invisible shape (it may belong to no shape of its
+/// own, and the relation needs its geometry), and the follower carries the relation — its
+/// target, the curve element, the animated progress, rotate to follow and bend with curve.
+pub(crate) fn resolve_follows(b: &mut Builder, flat: &mut [FlatLayer], layers: &[Value]) {
+    for r in std::mem::take(&mut b.follows) {
+        let Some(&target_id) = b.uuids.get(&r.target_uuid) else {
+            b.report.skip("follow-path relations (their target layer is missing)");
+            continue;
+        };
+        let Some(target_value) = find_layer(layers, &r.target_uuid) else { continue };
+        let Some(target_index) = flat.iter().position(|f| f.layer.id == target_id) else { continue };
+        let (ok, el_id) = build_follow(b, &mut flat[target_index].layer, target_value, r.curve);
+        if !ok {
+            b.report.skip("follow-path relations (their curve is unreadable)");
+            continue;
+        }
+        let mut following = anicraft_doc::Channel::default();
+        anim::read_channel_value(&mut following, &r.following, &mut b.report, 0, |ch, i| channel::sample_f64_at(ch, i).unwrap_or(0.0) as f32);
+        let Some(follower) = flat.iter_mut().find(|f| f.layer.id == r.follower) else { continue };
+        follower.layer.follow = Some(anicraft_doc::FollowPath { target: target_id, element: el_id, subpath: 0, following, rotate: r.rotate, bending: r.bending });
+    }
+}
+
+/// Flattens the followed curve onto the target layer's first keyframe as an invisible
+/// shape (a path with no fill and no stroke draws nothing); returns the element's id.
+fn build_follow(b: &mut Builder, target: &mut Layer, target_value: &Value, curve: usize) -> (bool, anicraft_doc::ElementId) {
+    let data = mesh::parse_mesh(b, get(target_value, "mesh").unwrap_or(&Value::Null));
+    let Some(path) = data.as_ref().and_then(|d| mesh::curve_path(d, curve)) else {
+        return (false, anicraft_doc::ElementId(b.doc.alloc_id()));
+    };
+    let to_px = b.to_px;
+    let transform = to_px.mul(&layer_transform(b, target_value));
+    let el_id = anicraft_doc::ElementId(b.doc.alloc_id());
+    let el = Element {
+        id: el_id,
+        name: String::new(),
+        transform,
+        color: ColorEffect::default(),
+        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None, texture: None }),
+    };
+    if let Some(kf) = target.keyframes.first_mut() {
+        Arc::make_mut(kf).elements.push(Arc::new(el));
+    }
+    (true, el_id)
+}
+
+/// Finds a layer by its Moho uuid, anywhere in the inline tree.
+fn find_layer<'v>(layers: &'v [Value], uuid: &str) -> Option<&'v Value> {
+    for l in layers {
+        if json::string(get(l, "uuid")).as_deref() == Some(uuid) {
+            return Some(l);
+        }
+        if let Some(found) = array(get(l, "layers")).and_then(|kids| find_layer(kids, uuid)) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out: &mut Vec<FlatLayer>) -> Option<LayerId> {
     let ty = layer_type(layer);
     let name = json::string(get(layer, "name")).unwrap_or_else(|| "Layer".into());
     let id = LayerId(b.doc.alloc_id());
     let mut l = Layer::new(id, name);
     l.parent = into.parent;
+    // The Follow Path relations reference layers by Moho uuid (ADR 0109).
+    if let Some(u) = json::string(get(layer, "uuid")).filter(|u| !u.is_empty()) {
+        b.uuids.insert(u, id);
+    }
     l.visible = layer_visibility(b, layer) && !into.hidden;
     // The layer's effect stack: opacity and the static filters (ADR 0103). Any layer kind
     // carries them in Moho.
@@ -216,6 +281,21 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
     match ty.as_str() {
         "MeshLayer" | "ImageLayer" | "TextLayer" => {
             count_layer_extras(b, layer);
+            // A Follow Path relation resolves after the walk (the target may come later in
+            // Moho's bottom-first array than its follower): record it here (ADR 0109).
+            let target_uuid = json::string(get(layer, "follow_layer_uuid")).unwrap_or_default();
+            if !target_uuid.is_empty()
+                && let Some(curve) = json::integer(get(layer, "follow_curve")).filter(|c| *c >= 0)
+            {
+                b.follows.push(FollowRequest {
+                    follower: id,
+                    target_uuid,
+                    curve: curve as usize,
+                    rotate: json::boolean(get(layer, "rotate_to_follow")).unwrap_or(false),
+                    bending: json::boolean(get(layer, "follow_bending")).unwrap_or(false),
+                    following: get(layer, "transforms").and_then(|t| get(t, "following")).cloned().unwrap_or(Value::Null),
+                });
+            }
             // A mask member of a masking group becomes the mask itself: its fills clip the
             // group's other members (walk_masked_group parents them), and draw beneath
             // them when the Moho member drew itself (ADR 0108).
@@ -350,11 +430,10 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     if json::integer(get(layer, "blend_mode")).is_some_and(|m| m != 0) {
         b.report.skip("layer blend modes");
     }
-    if !json::string(get(layer, "follow_layer_uuid")).is_none_or(|u| u.is_empty()) {
-        b.report.skip("follow-path relations (positions are already baked)");
-    }
-    if json::boolean(get(layer, "rotate_to_follow")).unwrap_or(false) {
-        b.report.skip("rotate to follow");
+    // The Follow Path relation itself resolves (ADR 0109); bending has no rendering slot:
+    // the vendor publishes no bend algorithm and the corpus has no bent specimen.
+    if json::boolean(get(layer, "follow_bending")).unwrap_or(false) {
+        b.report.skip("follow bending (the artwork rides the path, it does not bend)");
     }
     if ch("timeline_markers").is_some_and(|c| channel::sample_string(&c, frame).is_some_and(|s| !s.is_empty())) {
         b.report.skip("layer timeline markers");
@@ -574,9 +653,6 @@ fn layer_transform(b: &mut Builder, layer: &Value) -> Affine {
         sy = -sy;
     }
     let (shx, shy, _) = ch("shear").and_then(|c| channel::sample_vec3(&c, frame)).unwrap_or((0.0, 0.0, 0.0));
-    if ch("following").is_some_and(|c| c.is_animated()) {
-        b.report.skip("follow progress animation");
-    }
     let origin = get(layer, "origin").and_then(|v| json::vec2(Some(v))).unwrap_or(anicraft_geom::Vec2::ZERO);
     let shear = Affine { m: [1.0, shy, shx, 1.0, 0.0, 0.0] };
     // Moho pivots layer rotation, shear and scale at the layer origin:

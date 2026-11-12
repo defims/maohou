@@ -85,6 +85,22 @@ pub(crate) struct Builder<'a> {
     /// The physics-enabled group's world (ADR 0106), collected during the layer walk and
     /// put on the scene when the walk found one.
     pub world: Option<anicraft_doc::PhysicsWorld>,
+    /// Moho layer uuid → imported layer id (the Follow Path relations reference uuids).
+    pub uuids: HashMap<String, anicraft_doc::LayerId>,
+    /// Follow Path relations seen during the walk, resolved once the whole tree exists.
+    pub follows: Vec<FollowRequest>,
+}
+
+/// One Follow Path relation seen during the walk (ADR 0109): the follower, whom it
+/// follows (by Moho uuid), which curve, how, and the target's mesh for the post-walk
+/// resolution to flatten the followed curve from.
+pub(crate) struct FollowRequest {
+    pub follower: anicraft_doc::LayerId,
+    pub target_uuid: String,
+    pub curve: usize,
+    pub rotate: bool,
+    pub bending: bool,
+    pub following: Value,
 }
 
 impl<'a> Builder<'a> {
@@ -171,7 +187,7 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
     let from_px = to_px.inverse().unwrap_or(Affine::IDENTITY);
 
     let frames = ((start as u64 - 1).clamp(0, MAX_FRAME as u64) as u32, (end as u64).clamp(1, MAX_FRAME as u64) as u32);
-    let mut b = Builder { doc, report: Report::default(), fonts, faces: HashMap::new(), read, to_px, from_px, dpi, frame: start, duration, frames, world: None };
+    let mut b = Builder { doc, report: Report::default(), fonts, faces: HashMap::new(), read, to_px, from_px, dpi, frame: start, duration, frames, world: None, uuids: HashMap::new(), follows: Vec::new() };
 
     // Render/document settings without a slot, counted when non-default.
     document_settings(&mut b.report, pd);
@@ -193,6 +209,7 @@ pub(crate) fn import_json(root: Value, read: &Reader<'_>, fonts: Option<&Fonts>)
     let mut flat: Vec<FlatLayer> = Vec::new();
     let into = layer::Inherit::under(None);
     layer::walk(&mut b, layers, &into, 0, &mut flat);
+    layer::resolve_follows(&mut b, &mut flat, layers);
     let mut layers_out: Vec<_> = flat.into_iter().map(|f| Arc::new(f.layer)).collect();
     if layers_out.is_empty() {
         layers_out.push(Arc::new(anicraft_doc::Layer::new(anicraft_doc::LayerId(b.doc.alloc_id()), "Layer 1")));

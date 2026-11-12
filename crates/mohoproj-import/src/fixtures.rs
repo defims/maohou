@@ -192,10 +192,21 @@ fn follow_path_imports() {
     let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("follow-path.moho: {e}"));
     assert_eq!(layer_names(&doc), ["FollowLayer", "Layer 1"]);
     let els = &doc.timeline(0).layers[1].keyframes[0].elements;
-    assert_eq!(els.len(), 30, "13 fill + 17 stroke elements from 17 shapes");
-    assert_eq!(report.skipped.get("follow-path relations (positions are already baked)"), Some(&1), "{:?}", report.skipped);
-    assert!(report.skipped.contains_key("rotate to follow"));
-    assert!(report.skipped.contains_key("follow progress animation"));
+    assert_eq!(els.len(), 31, "13 fill + 17 stroke elements from 17 shapes, plus the followed curve");
+    // The Follow Path relation rides the document (ADR 0109): the empty FollowLayer follows
+    // Layer 1's S curve, rotating along it, its progress animated; bending alone is counted
+    // (no published algorithm, no bent specimen).
+    assert_eq!(report.skipped.get("follow bending (the artwork rides the path, it does not bend)"), Some(&1), "{:?}", report.skipped);
+    let follow = doc.timeline(0).layers[0].follow.as_ref().expect("the FollowLayer carries the relation");
+    assert_eq!(follow.target, doc.timeline(0).layers[1].id);
+    assert!(follow.rotate, "rotate to follow");
+    assert!(follow.bending, "bend with curve is kept (counted, not rendered)");
+    assert!((follow.following.sample_or(0.0, -1.0) - 1.0).abs() < 1e-6, "progress 1 at frame 0");
+    assert!((follow.following.sample_or(50.0, -1.0) - 0.0).abs() < 1e-6, "progress 0 at frame 50");
+    // The followed S curve (Moho mesh curve 17, no shape of its own) landed on the target
+    // as the relation's invisible geometry.
+    assert!(els.last().is_some_and(|el| el.id == follow.element
+        && matches!(&el.kind, anicraft_doc::ElementKind::Shape(s) if s.fill.is_none() && s.stroke.is_none())), "the followed curve is the invisible path");
 }
 
 #[test]

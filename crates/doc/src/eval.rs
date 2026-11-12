@@ -3,9 +3,9 @@
 use crate::camera::Camera;
 use crate::nine_slice::Slicing;
 use crate::player::PlayerState;
-use crate::{ColorTransform, Document, Element, ElementId, ElementKind, Layer, LayerId, LayerKind, MAX_LAYER_DEPTH, Paint, Rgba, Shape, Stroke, SymbolId, SymbolKind, Timeline, TweenKind};
+use crate::{ColorTransform, Document, Element, ElementId, ElementKind, FollowPath, Layer, LayerId, LayerKind, MAX_LAYER_DEPTH, Paint, Rgba, Shape, Stroke, SymbolId, SymbolKind, Timeline, TweenKind};
 use anicraft_geom::walk::PathWalk;
-use anicraft_geom::{Affine, FillRule, Path, PathCmd};
+use anicraft_geom::{Affine, FillRule, Path, PathCmd, Vec2};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -581,6 +581,13 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
         // its own transform channels. Inside symbols the enclosing instance's transform
         // already says where everything is, but a folder there still moves its run.
         let own = if cx.depth == 0 || layer.kind.is_container() { layer.transform_at(frame) } else { Affine::IDENTITY };
+        // A followed layer rides another layer's curve (Moho's Follow Path; ADR 0109): the
+        // path point — and the tangent's angle, when it rotates to follow — goes ahead of
+        // the layer's own channels, which then move it relative to the path frame.
+        let own = match &layer.follow {
+            Some(f) => follow_transform(tl, f, frame).mul(&own),
+            None => own,
+        };
         let layer_xf = if cx.depth == 0 {
             let base = if layer.camera_immune || cx.immune {
                 cx.xf
@@ -887,6 +894,75 @@ fn sliced_shape(s: &Shape, own: &Affine, sl: &Slicing) -> (Arc<Path>, Affine, Op
         Paint::Solid(_) | Paint::Bitmap { .. } => f.clone(),
     });
     (path, sl.post, fill, stroke)
+}
+
+/// Where a followed layer sits this frame (ADR 0109): the point at the `following`
+/// channel's curve percentage on the target layer's curve — in the target's own stage
+/// placement (its folder chain and transform channels; the follower's own camera and
+/// folder chain then apply on top, as for any layer) — turned to the tangent when the
+/// layer rotates to follow. A relation that cannot resolve (target gone, curve element
+/// gone) leaves the layer where its own transform puts it.
+fn follow_transform(tl: &Timeline, f: &FollowPath, frame: u32) -> Affine {
+    let Some(target) = tl.layer(f.target) else { eprintln!("DEBUG no target"); return Affine::IDENTITY };
+    let mut chain = Affine::IDENTITY;
+    let mut p = target.parent;
+    let mut hops = 0usize;
+    while let Some(pid) = p
+        && hops < MAX_LAYER_DEPTH
+    {
+        let Some(folder) = tl.layer(pid) else { break };
+        chain = chain.mul(&folder.transform_at(frame));
+        p = folder.parent;
+        hops += 1;
+    }
+    let at = chain.mul(&target.transform_at(frame));
+    let Some((_, elements)) = evaluate_guided(target, frame, None) else { return Affine::IDENTITY };
+    let Some(el) = elements.iter().find(|e| e.id == f.element) else { return Affine::IDENTITY };
+    let ElementKind::Shape(s) = &el.kind else { return Affine::IDENTITY };
+    let Some((point, angle)) = path_point(&s.path, &at.mul(&el.transform), f.subpath, f.following.sample_or(frame as f32, 0.0)) else {
+        return Affine::IDENTITY;
+    };
+    let mut m = Affine::translate(point.x, point.y);
+    if f.rotate {
+        m = m.mul(&Affine::rotate(angle));
+    }
+    m
+}
+
+/// The point at `percent` (Moho's curve percentage, 0 = the first point) of a path's
+/// `subpath`, flattened in `at`, with the tangent's screen angle there. Arc length is
+/// measured on the flattening, the renderer's own geometry.
+fn path_point(path: &Path, at: &Affine, subpath: usize, percent: f32) -> Option<(Vec2, f32)> {
+    let polys = path.flatten(at, 0.25);
+    let poly = polys.get(subpath)?;
+    let pts = &poly.points;
+    if pts.len() < 2 {
+        return None;
+    }
+    let mut total = 0.0f32;
+    let mut lens = Vec::with_capacity(pts.len() - 1);
+    for w in pts.windows(2) {
+        let d = (w[1] - w[0]).length();
+        lens.push(d);
+        total += d;
+    }
+    if total <= 1e-6 {
+        return None;
+    }
+    let mut want = (percent / 100.0).clamp(0.0, 1.0) * total;
+    for (i, d) in lens.iter().enumerate() {
+        if want > *d && i + 1 < lens.len() {
+            want -= *d;
+            continue;
+        }
+        let t = (want / d.max(1e-6)).clamp(0.0, 1.0);
+        let a = pts[i];
+        let b = pts[i + 1];
+        let point = a + (b - a) * t;
+        let angle = (b.y - a.y).atan2(b.x - a.x);
+        return Some((point, angle));
+    }
+    None
 }
 
 #[cfg(test)]
