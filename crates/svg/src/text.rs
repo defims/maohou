@@ -292,6 +292,7 @@ impl<'a> Builder<'a> {
             stroke: None,
             box_width: layout.width,
             box_height: layout.height,
+            field: None,
         };
         Ok(Some((block, ascent)))
     }

@@ -5,6 +5,7 @@
 //! JSON params, so headless and interactive behaviour cannot drift apart.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod anim;
 mod cmds_actions;
 mod cmds_bone;
 pub mod cmds_brush;
@@ -13,18 +14,22 @@ mod cmds_rig;
 mod cmds_physics;
 mod cmds_switch;
 mod cmds_draw;
+pub mod cmds_drop;
 pub mod cmds_erase;
 mod cmds_file;
 mod cmds_frames;
 mod cmds_modify;
 mod cmds_motion;
 mod cmds_hints;
+mod cmds_layer;
 pub mod cmds_library;
 mod cmds_paint;
 mod cmds_path;
 pub mod cmds_raw;
 pub mod cmds_rawsub;
 mod cmds_rawpoints;
+pub mod cmds_recent;
+pub mod cmds_template;
 mod cmds_recovery;
 mod cmds_script;
 pub mod cmds_plugin;
@@ -37,6 +42,8 @@ mod cmds_width;
 mod cmds_stroke;
 pub mod confirm;
 pub mod editing;
+pub mod explorer;
+pub mod find;
 pub mod format;
 pub mod history;
 mod merge;
@@ -47,6 +54,7 @@ pub mod render_service;
 pub mod selection;
 pub mod params;
 pub mod player;
+pub mod publish;
 pub mod vfs;
 
 use anicraft_doc::{DisplayList, Document, Element, ElementId, ElementKind, Keyframe, Layer, LayerId, LayerKind, evaluate_layer_elements, evaluate_scene};
@@ -79,6 +87,9 @@ pub enum EngineError {
     Render(#[from] anicraft_render::RenderError),
     #[error("{0}")]
     NeedsConfirmation(String),
+    /// A running publish was cancelled (ADR 0060).
+    #[error("cancelled")]
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
@@ -112,8 +123,12 @@ impl CommandSpec {
 pub fn commands() -> Vec<CommandSpec> {
     let mut v = Vec::new();
     v.extend(cmds_file::specs());
+    v.extend(publish::specs());
+    v.extend(cmds_recent::specs());
+    v.extend(cmds_drop::specs());
     v.extend(cmds_recovery::specs());
     v.extend(cmds_timeline::specs());
+    v.extend(cmds_layer::specs());
     v.extend(cmds_bone::specs());
     v.extend(cmds_rig::specs());
     v.extend(cmds_switch::specs());
@@ -135,6 +150,8 @@ pub fn commands() -> Vec<CommandSpec> {
     v.extend(cmds_rawsub::specs());
     v.extend(cmds_rawpoints::specs());
     v.extend(editing::specs());
+    v.extend(find::specs());
+    v.extend(explorer::specs());
     v.extend(cmds_brush::specs());
     v.extend(cmds_erase::specs());
     v.extend(cmds_paint::specs());
@@ -165,6 +182,7 @@ pub fn find_command(id: &str) -> Option<CommandSpec> {
 
 pub use history::{Snapshot, StateId};
 pub use selection::Selection;
+pub use cmds_layer::LAYER_COLORS;
 
 /// Last addressable frame (0-based); about 70 minutes at 24 fps.
 pub const MAX_FRAME: u32 = 100_000;
@@ -302,8 +320,20 @@ pub struct Session {
     pub(crate) pending_cut: Option<(CutOrigin, Vec<ElementId>)>,
     /// The open gesture began on a provisional cut: the document with the cut.
     gesture_cut: Option<Document>,
+    /// How a button open for editing shows its hit area over its other states (ADR 0057): the
+    /// tint and opacity, or `None` for no overlay (the default; the app sets it from its theme).
+    /// View state, like the playhead: never in the document or its undo history.
+    pub hit_area: Option<(anicraft_doc::Rgba, f32)>,
     /// The last picture of an open symbol in place, by its key (ADR 0045).
     picture_cache: RefCell<Option<(u64, Arc<editing::StagePicture>)>>,
+    /// A publish this session runs: its Cancel and frame count, which exports check (ADR 0060).
+    pub job: Option<Arc<publish::Control>>,
+    /// Files this session's publishes wrote: publishing again replaces them without asking.
+    pub published: std::collections::BTreeSet<PathBuf>,
+    /// The files opened and saved last, and pinned favourites (ADR 0059). They belong to the
+    /// session, not the document: they survive New and Open. The desktop app keeps them in its
+    /// preferences.
+    pub recent: cmds_recent::RecentFiles,
 }
 
 /// Each piece of a marquee's cut, with the shape it was cut from.
@@ -368,7 +398,11 @@ impl Session {
             provisional: None,
             pending_cut: None,
             gesture_cut: None,
+            hit_area: None,
             picture_cache: RefCell::new(None),
+            job: None,
+            published: std::collections::BTreeSet::new(),
+            recent: cmds_recent::RecentFiles::default(),
         }
     }
 
@@ -450,7 +484,9 @@ impl Session {
         let budget = self.history.budget_bytes;
         let clipboard = std::mem::take(&mut self.clipboard);
         let plugins = std::mem::take(&mut self.plugins);
+        let recent = std::mem::take(&mut self.recent);
         *self = Session::new(doc);
+        self.recent = recent;
         // The clipboard survives New/Open, so artwork can move between documents.
         self.clipboard = clipboard;
         self.plugins = plugins;
@@ -902,6 +938,30 @@ pub(crate) enum KeyEdit {
     Pose,
 }
 
+/// A colour effect as commands report it (ADR 0056): its style and that style's values, in the
+/// units `element.set_color_effect` takes (percent; Advanced offsets −255..255).
+pub fn color_effect_json(fx: &anicraft_doc::ColorEffect) -> serde_json::Value {
+    use anicraft_doc::ColorEffect;
+    let r = |v: f32, k: f32| f64::from((v * k * 100.0).round() / 100.0);
+    let mut v = serde_json::json!({"style": fx.style().key()});
+    match *fx {
+        ColorEffect::None => {}
+        ColorEffect::Alpha(a) => v["alpha"] = r(a, 100.0).into(),
+        ColorEffect::Brightness(b) => v["brightness"] = r(b, 100.0).into(),
+        ColorEffect::Tint { color, amount } => {
+            v["tint"] = color.to_hex().into();
+            v["tint_amount"] = r(amount, 100.0).into();
+        }
+        ColorEffect::Advanced(t) => {
+            for (i, ch) in ["red", "green", "blue", "alpha"].iter().enumerate() {
+                v[format!("{ch}_multiplier")] = r(t.mul.get(i).copied().unwrap_or(1.0), 100.0).into();
+                v[format!("{ch}_offset")] = r(t.add.get(i).copied().unwrap_or(0.0), 255.0).into();
+            }
+        }
+    }
+    v
+}
+
 /// Short human label for an element (properties panel, library, CLI).
 pub fn element_label(doc: &Document, e: &Element) -> String {
     let kind = match &e.kind {
@@ -915,6 +975,13 @@ pub fn element_label(doc: &Document, e: &Element) -> String {
             None => "Graphic: missing".to_string(),
         },
         ElementKind::Camera => "Camera".to_string(),
+        // An empty field (an input field waiting for the viewer) is named by its type.
+        ElementKind::Text(t) if t.text.trim().is_empty() => match t.kind() {
+            anicraft_doc::TextKind::Static => "Static text",
+            anicraft_doc::TextKind::Dynamic => "Dynamic text",
+            anicraft_doc::TextKind::Input => "Input text",
+        }
+        .to_string(),
         ElementKind::Text(t) => {
             let first: String = t.text.lines().next().unwrap_or("").chars().take(24).collect();
             format!("Text: {first}{}", if t.text.chars().count() > first.chars().count() { "…" } else { "" })
@@ -928,6 +995,8 @@ mod tests;
 
 #[cfg(test)]
 mod motion_tests;
+#[cfg(test)]
+mod color_tests;
 #[cfg(test)]
 mod motion_path_tests;
 #[cfg(test)]
@@ -972,3 +1041,11 @@ mod erase_tests;
 mod eyedropper_tests;
 #[cfg(test)]
 mod selection_tests;
+#[cfg(test)]
+mod scale_grid_tests;
+#[cfg(test)]
+mod drop_tests;
+#[cfg(test)]
+mod template_tests;
+#[cfg(test)]
+mod timeline_drop_tests;

@@ -10,11 +10,14 @@ pub use anicraft_actions as actions;
 pub mod armature;
 mod bitmap;
 mod channel;
+mod color_effect;
 pub mod camera;
 mod filter;
 mod easing;
 mod eval;
+pub mod field;
 mod hints;
+pub mod nine_slice;
 pub mod library;
 pub mod motion;
 pub mod path_table;
@@ -25,16 +28,19 @@ pub mod texture;
 pub mod width;
 pub mod stroke_style;
 pub mod player;
+pub mod publish;
 pub mod sample;
+pub mod templates;
 pub mod sound;
 
 pub use filter::{Filter, FilterSide, MAX_BLUR, MAX_QUALITY, MAX_RAMP_STOPS, REST_SNAP, default_bevel_ramp, default_glow_ramp, pinned_stop, ramp_at};
-pub use bitmap::{Bitmap, BitmapId, ImageError, MAX_BITMAP_EDGE, Pixels, base64_encode, decode_png, image_to_png};
+pub use bitmap::{Bitmap, BitmapId, ImageError, MAX_BITMAP_EDGE, Pixels, base64_decode, base64_encode, decode_png, image_to_png};
 pub use channel::{Channel, ChannelValue, Handle, Interp, Key, MAX_CHANNEL_FRAME, MAX_CHANNEL_KEYS};
 pub use easing::Easing;
+pub use color_effect::{ADVANCED_ADD, ADVANCED_MUL, ColorEffect, ColorStyle, ColorTransform};
 pub use hints::{HINT_TOLERANCE, HintSide, MAX_SHAPE_HINTS, ShapeHint, hint_index, hint_letter, nearest_outline, placed_on, shapes_centre};
 pub use library::{FolderId, LibraryEntry, LibraryFolder, LibraryItem, LibraryTree, NameError};
-pub use motion::{MotionTween, OnPath, Pin, PinError, Property, PropertyKey, Props, Track, motion_path};
+pub use motion::{MotionTween, OnPath, PROPERTIES, Pin, PinError, Property, PropertyKey, Props, Track, motion_path};
 pub use physics::{Baked, BakedBody, PhysicsBody, PhysicsError, PhysicsWorld, bake as bake_physics};
 pub use points::{PointTrack, Trim, path_point_count, rebuild as rebuild_path, trim as trim_path};
 pub use texture::{TextureMap, fit_affine, paint_for as texture_paint_for};
@@ -43,6 +49,7 @@ pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, W
 pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
 pub use camera::Camera;
 pub use rig::{Action as BoneAction, Bone, BoneId, Skeleton, MAX_BONES};
+pub use nine_slice::symbol_box;
 pub use eval::{DisplayItem, DisplayList, Group, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_player, evaluate_scene, evaluate_scene_camera, evaluate_timeline, evaluate_timeline_at, guide_walk, instance_start};
 pub use armature::{Armature, JointAngle, Limits, Pose};
 pub use actions::{Action, ButtonEvent, EventHandler, FrameScript, Language, PluginScript, SourceScript};
@@ -512,43 +519,148 @@ pub struct TextBlock {
     /// The layout box.
     pub box_width: f32,
     pub box_height: f32,
+    /// A dynamic or input text field (ADR 0066); `None`: static text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<TextField>,
 }
 
-/// Colour effect applied to an element and everything inside it.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ColorEffect {
-    /// Alpha multiplier `0..=1`.
-    pub alpha: f32,
-    /// Tint colour mixed in by `tint_amount`.
-    pub tint: Rgba,
-    pub tint_amount: f32,
-}
-
-impl Default for ColorEffect {
-    fn default() -> Self {
-        ColorEffect { alpha: 1.0, tint: Rgba::WHITE, tint_amount: 0.0 }
+impl TextBlock {
+    /// What kind of text it is: static, dynamic or input.
+    pub fn kind(&self) -> TextKind {
+        self.field.as_ref().map_or(TextKind::Static, |f| f.kind)
     }
 }
 
-impl ColorEffect {
-    /// Effect of `inner` nested inside `self`.
-    pub fn concat(&self, inner: &ColorEffect) -> ColorEffect {
-        // Tints compose by keeping the stronger one; alpha multiplies.
-        let (tint, amount) = if inner.tint_amount >= self.tint_amount { (inner.tint, inner.tint_amount) } else { (self.tint, self.tint_amount) };
-        ColorEffect { alpha: self.alpha * inner.alpha, tint, tint_amount: amount }
-    }
-    pub fn lerp(&self, o: &ColorEffect, t: f32) -> ColorEffect {
-        ColorEffect {
-            alpha: anicraft_geom::lerp(self.alpha, o.alpha, t),
-            tint: self.tint.lerp(o.tint, t),
-            tint_amount: anicraft_geom::lerp(self.tint_amount, o.tint_amount, t),
+/// Animate's three text types (ADR 0066).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextKind {
+    /// Drawn as laid out; scripts can't reach it.
+    #[default]
+    Static,
+    /// Scripts set and read its text (`field.text`) while the movie plays.
+    Dynamic,
+    /// The viewer types into it while the movie plays; scripts read what was typed.
+    Input,
+}
+
+impl TextKind {
+    pub const ALL: [TextKind; 3] = [TextKind::Static, TextKind::Dynamic, TextKind::Input];
+    pub fn key(self) -> &'static str {
+        match self {
+            TextKind::Static => "static",
+            TextKind::Dynamic => "dynamic",
+            TextKind::Input => "input",
         }
     }
-    pub fn apply(&self, c: Rgba) -> Rgba {
-        let k = self.tint_amount.clamp(0.0, 1.0);
-        let mut out = c.lerp(self.tint.with_alpha(c.a), k);
-        out.a = c.a * self.alpha.clamp(0.0, 1.0);
-        out
+    pub fn from_key(s: &str) -> Option<TextKind> {
+        TextKind::ALL.into_iter().find(|k| k.key() == s.trim().to_ascii_lowercase())
+    }
+}
+
+/// A field's line type, as Animate's Properties name them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineType {
+    /// One line: Enter types nothing, the text scrolls sideways to keep the caret in view.
+    #[default]
+    Single,
+    /// Lines wrap at the field's width.
+    Multiline,
+    /// Lines break only where the text does.
+    MultilineNoWrap,
+    /// One line, drawn as `*` (input fields).
+    Password,
+}
+
+impl LineType {
+    pub const ALL: [LineType; 4] = [LineType::Single, LineType::Multiline, LineType::MultilineNoWrap, LineType::Password];
+    pub fn key(self) -> &'static str {
+        match self {
+            LineType::Single => "single",
+            LineType::Multiline => "multiline",
+            LineType::MultilineNoWrap => "multiline_no_wrap",
+            LineType::Password => "password",
+        }
+    }
+    pub fn from_key(s: &str) -> Option<LineType> {
+        let s = s.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        LineType::ALL.into_iter().find(|k| k.key() == s)
+    }
+    /// More than one line (Enter starts a new one).
+    pub fn multiline(self) -> bool {
+        matches!(self, LineType::Multiline | LineType::MultilineNoWrap)
+    }
+}
+
+/// The inset of text in a field's box, on every side, in pixels (as Animate's fields have).
+pub const FIELD_GUTTER: f32 = 2.0;
+/// Longest text a field holds (characters).
+pub const MAX_FIELD_CHARS: usize = 16_384;
+/// Longest instance or variable name (characters).
+pub const MAX_FIELD_NAME: usize = 256;
+
+/// A dynamic or input text field (ADR 0066): how it is drawn and how the viewer may use it. The
+/// element's name is its instance name; the block's text is what it shows before a script or the
+/// viewer changes it. Its box is the block's `box_width` × `box_height` (fixed, not the text's
+/// size), and its outline is the shown text laid out [`FIELD_GUTTER`] inside the box, so
+/// everything that draws or measures text works on fields unchanged.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TextField {
+    pub kind: TextKind,
+    #[serde(default)]
+    pub lines: LineType,
+    /// The viewer can select its text (dynamic fields; input fields always can).
+    #[serde(default = "yes")]
+    pub selectable: bool,
+    /// A line around the box, and a fill behind the text.
+    #[serde(default)]
+    pub border: bool,
+    #[serde(default = "black")]
+    pub border_color: Rgba,
+    #[serde(default)]
+    pub background: bool,
+    #[serde(default = "white")]
+    pub background_color: Rgba,
+    /// Most characters the viewer may type (0: no limit).
+    #[serde(default)]
+    pub max_chars: u32,
+    /// The ActionScript 1/2 variable the field shows (kept from Animate documents, not run).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub variable: String,
+}
+
+fn black() -> Rgba {
+    Rgba::BLACK
+}
+fn white() -> Rgba {
+    Rgba::WHITE
+}
+
+impl TextField {
+    /// A single-line field of `kind`.
+    pub fn new(kind: TextKind) -> TextField {
+        TextField { kind, lines: LineType::Single, selectable: true, border: false, border_color: Rgba::BLACK, background: false, background_color: Rgba::WHITE, max_chars: 0, variable: String::new() }
+    }
+
+    /// The width text wraps at in a box `box_width` wide, if its lines wrap.
+    pub fn wrap_width(&self, box_width: f32) -> Option<f32> {
+        (self.lines == LineType::Multiline).then(|| (box_width - 2.0 * FIELD_GUTTER).max(1.0))
+    }
+
+    /// What a field shows for `text`: `*` for each character of a password.
+    pub fn shown(&self, text: &str) -> String {
+        if self.lines == LineType::Password && self.kind == TextKind::Input { text.chars().map(|_| '*').collect() } else { text.to_string() }
+    }
+
+    /// The viewer can focus it: an input field, or a selectable dynamic one.
+    pub fn focusable(&self) -> bool {
+        self.kind == TextKind::Input || (self.kind == TextKind::Dynamic && self.selectable)
+    }
+
+    /// Values in range: names cut to length, at most [`MAX_FIELD_CHARS`] typed.
+    pub fn sanitized(&self) -> TextField {
+        TextField { max_chars: self.max_chars.min(MAX_FIELD_CHARS as u32), variable: self.variable.chars().take(MAX_FIELD_NAME).collect(), ..self.clone() }
     }
 }
 
@@ -769,10 +881,20 @@ pub struct Layer {
     pub visible: bool,
     #[serde(default)]
     pub locked: bool,
+    /// View as Outlines (ADR 0061): the stage draws the layer's artwork as hairlines in
+    /// [`Layer::color`]. Never in the movie or an export.
     #[serde(default)]
     pub outline: bool,
     #[serde(default = "default_layer_color")]
     pub color: Rgba,
+    /// Onion skin draws this layer's frames around the playhead (ADR 0061); off, only its
+    /// playhead frame shows.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub onion: bool,
+    /// Row height on the timeline as a multiple of a normal row (ADR 0061): 1, 2 or 3 (100,
+    /// 200 or 300 %), as Animate's Layer Properties offer. Read through [`Layer::height`].
+    #[serde(default = "one", skip_serializing_if = "is_one", rename = "height")]
+    pub height_rows: u8,
     #[serde(default)]
     pub keyframes: Vec<Arc<Keyframe>>,
     /// Layer depth (ADR 0027), pixels behind the stage (negative: in front): the camera's pans
@@ -850,6 +972,18 @@ fn full() -> f32 {
 fn is_full(v: &f32) -> bool {
     *v == 1.0
 }
+fn is_true(v: &bool) -> bool {
+    *v
+}
+fn one() -> u8 {
+    1
+}
+fn is_one(v: &u8) -> bool {
+    *v == 1
+}
+
+/// Tallest a layer's timeline row gets, in normal rows (300 %).
+pub const MAX_LAYER_HEIGHT: u8 = 3;
 
 impl PartialEq for Layer {
     fn eq(&self, o: &Layer) -> bool {
@@ -861,6 +995,8 @@ impl PartialEq for Layer {
             && self.locked == o.locked
             && self.outline == o.outline
             && self.color == o.color
+            && self.onion == o.onion
+            && self.height_rows == o.height_rows
             && self.depth.to_bits() == o.depth.to_bits()
             && self.volume.to_bits() == o.volume.to_bits()
             && self.muted == o.muted
@@ -903,6 +1039,8 @@ impl Layer {
             locked: false,
             outline: false,
             color: default_layer_color(),
+            onion: true,
+            height_rows: 1,
             keyframes: vec![Arc::new(Keyframe::new(0, 1))],
             depth: 0.0,
             volume: 1.0,
@@ -1014,6 +1152,10 @@ impl Layer {
             fixed.sanitize();
             self.armature = Some(Arc::new(fixed));
         }
+    }
+    /// The row height in normal rows, `1..=MAX_LAYER_HEIGHT` whatever a file says.
+    pub fn height(&self) -> u8 {
+        self.height_rows.clamp(1, MAX_LAYER_HEIGHT)
     }
     /// The gain this layer gives its sounds: its volume, or silence when muted.
     pub fn sound_gain(&self) -> f32 {
@@ -1304,8 +1446,52 @@ pub struct Symbol {
     /// The class scripts know the symbol by (Animate's "linkage"), kept as text (ADR 0013).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linkage: Option<Linkage>,
+    /// Guides for 9-slice scaling (ADR 0055): an instance scaled keeps the corners outside them
+    /// unscaled. `None`: the symbol scales as a whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_grid: Option<ScaleGrid>,
+    /// The guides as they were when 9-slice scaling was switched off (ADR 0057): switching it on
+    /// again brings them back where they were. Only kept, never drawn or applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_grid_kept: Option<ScaleGrid>,
     pub timeline: Timeline,
 }
+
+/// The four 9-slice guides of a symbol (ADR 0055), in the symbol's own space: two vertical
+/// lines at `x = left` and `x = right`, two horizontal ones at `y = top` and `y = bottom`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ScaleGrid {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+impl ScaleGrid {
+    /// Guides a quarter of the way in from each edge of `bounds` (what turning guides on gives).
+    pub fn inset(bounds: &Rect) -> ScaleGrid {
+        let (w, h) = (bounds.width() * 0.25, bounds.height() * 0.25);
+        ScaleGrid { left: bounds.min.x + w, right: bounds.max.x - w, top: bounds.min.y + h, bottom: bounds.max.y - h }
+    }
+
+    /// Whether the guides are usable: finite, within the format's range, and in order.
+    pub fn check(&self) -> Result<(), String> {
+        let v = [self.left, self.right, self.top, self.bottom];
+        if !v.iter().all(|x| x.is_finite() && x.abs() <= MAX_GRID_COORD) {
+            return Err(format!("9-slice guides must be numbers within ±{MAX_GRID_COORD}"));
+        }
+        if self.left > self.right {
+            return Err("the left 9-slice guide must not be right of the right one".into());
+        }
+        if self.top > self.bottom {
+            return Err("the top 9-slice guide must not be below the bottom one".into());
+        }
+        Ok(())
+    }
+}
+
+/// Largest 9-slice guide coordinate accepted from files and commands.
+pub const MAX_GRID_COORD: f32 = 1_000_000.0;
 
 /// A symbol's script class: what scripts create it by, and the class it extends. Kept with
 /// the document and shown, never run (ADR 0013 tier 1).
@@ -1499,6 +1685,9 @@ pub struct Document {
     /// beside the mapped document; see [`MaohouSidecar`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub maop_maohou: Option<Arc<MaohouSidecar>>,
+    /// File › Publish Settings: the formats Publish writes and their options (ADR 0060).
+    #[serde(default, skip_serializing_if = "publish_is_default")]
+    pub publish: Arc<publish::PublishProfile>,
     /// Next free id for layers, elements and symbols.
     pub next_id: u64,
 }
@@ -1526,6 +1715,8 @@ struct DocumentFile {
     document_class: String,
     #[serde(default)]
     maop_maohou: Option<Arc<MaohouSidecar>>,
+    #[serde(default, skip_serializing_if = "publish_is_default")]
+    publish: Arc<publish::PublishProfile>,
     #[serde(default = "first_id")]
     next_id: u64,
 }
@@ -1536,7 +1727,7 @@ impl From<DocumentFile> for Document {
         if let Some(tl) = f.timeline {
             scenes.insert(0, Arc::new(Scene { name: "Scene 1".into(), timeline: tl, ..Scene::new("") }));
         }
-        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, library_tree: f.library_tree, styles: f.styles, document_class: f.document_class, maop_maohou: f.maop_maohou, next_id: f.next_id }
+        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, library_tree: f.library_tree, styles: f.styles, document_class: f.document_class, maop_maohou: f.maop_maohou, publish: f.publish, next_id: f.next_id }
     }
 }
 
@@ -1548,18 +1739,22 @@ fn library_tree_is_empty(t: &Arc<LibraryTree>) -> bool {
     t.is_empty()
 }
 
+fn publish_is_default(p: &Arc<publish::PublishProfile>) -> bool {
+    p.is_default()
+}
+
 /// What `timeline(i)` returns for a scene that does not exist (never for a sanitized document).
 static NO_TIMELINE: Timeline = Timeline { layers: Vec::new() };
 
 impl PartialEq for Document {
     fn eq(&self, o: &Document) -> bool {
-        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arc_eq(&self.library_tree, &o.library_tree) && arcs_eq(&self.styles, &o.styles) && self.maop_maohou == o.maop_maohou
+        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arc_eq(&self.library_tree, &o.library_tree) && arcs_eq(&self.styles, &o.styles) && self.maop_maohou == o.maop_maohou && arc_eq(&self.publish, &o.publish)
     }
 }
 
 impl Default for Document {
     fn default() -> Self {
-        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Arc::default(), styles: Vec::new(), document_class: String::new(), maop_maohou: None, next_id: 1 };
+        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Arc::default(), styles: Vec::new(), document_class: String::new(), maop_maohou: None, publish: Arc::default(), next_id: 1 };
         let id = LayerId(d.alloc_id());
         d.timeline_mut(0).layers.push(Arc::new(Layer::new(id, "Layer 1")));
         d
@@ -1676,10 +1871,23 @@ impl Document {
         if !self.document_class.is_empty() && !actions::valid_class_name(&self.document_class) {
             self.document_class.clear();
         }
+        let mut publish = (*self.publish).clone();
+        publish.sanitize();
+        if publish != *self.publish {
+            self.publish = Arc::new(publish);
+        }
         for sym in &mut self.library {
             max_id = max_id.max(sym.id.0);
             if sym.linkage.as_ref().is_some_and(|l| l.check().is_err()) {
                 Arc::make_mut(sym).linkage = None;
+            }
+            // 9-slice guides that aren't usable are dropped: the symbol scales as a whole.
+            if sym.scale_grid.as_ref().is_some_and(|g| g.check().is_err()) {
+                Arc::make_mut(sym).scale_grid = None;
+            }
+            // Kept guides (ADR 0057) only while 9-slice is off, and only usable ones.
+            if sym.scale_grid_kept.as_ref().is_some_and(|g| sym.scale_grid.is_some() || g.check().is_err()) {
+                Arc::make_mut(sym).scale_grid_kept = None;
             }
             let tl = &mut Arc::make_mut(sym).timeline;
             for l in &mut tl.layers {

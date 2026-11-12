@@ -63,8 +63,13 @@ pub struct Prefs {
     pub language: String,
     pub ui_font: FontChoice,
     pub data_font: FontChoice,
-    /// Graphite or high contrast (ADR 0022).
+    /// Graphite or high contrast (ADR 0022), when chosen by hand.
     pub theme: crate::theme::Palette,
+    /// Follow the system's contrast setting (ADR 0064): high contrast while the system asks for
+    /// more contrast, graphite otherwise. `None` (files from before): it follows, unless the
+    /// file chose high contrast.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme_follows_system: Option<bool>,
     /// Interface scale (1.0 = 100%).
     pub ui_scale: f32,
     pub render_mode: RenderMode,
@@ -79,6 +84,8 @@ pub struct Prefs {
     /// Extra space before frame 1 on the timeline, in points, on top of the room the playhead
     /// needs (the playhead can't go there). Fixed on screen, whatever the zoom.
     pub timeline_start_gap: f32,
+    /// Frame view › Short (ADR 0061): timeline rows at their short height.
+    pub timeline_short_rows: bool,
     /// Keyboard shortcuts the user changed: action id → its full list of keys (empty =
     /// unbound). Actions not listed keep their defaults (`keymap`).
     pub shortcuts: std::collections::BTreeMap<String, Vec<String>>,
@@ -90,7 +97,25 @@ pub struct Prefs {
     pub autosave_edits: u32,
     /// Onion skin options (ADR 0047), kept from session to session.
     pub onion: OnionPrefs,
+    /// Publish Settings presets, by name (ADR 0060): yours on this computer, for any document.
+    pub publish_presets: std::collections::BTreeMap<String, anicraft_engine::doc::publish::PublishProfile>,
+    /// File › Open Recent and the start screen's list (ADR 0059): pinned favourites, then the
+    /// last 10 documents opened or saved.
+    #[serde(deserialize_with = "lenient_recent")]
+    pub recent: anicraft_engine::cmds_recent::RecentFiles,
+    /// Show the start screen when AniCraft starts without a document to open (ADR 0059).
+    pub start_screen: bool,
+    /// Test Movie plays in a window of its own (ADR 0062); off, or where a system can't open
+    /// one, it floats inside the editor.
+    pub test_movie_window: bool,
+    /// Where the Test Movie window was last, in points (its top-left corner); `None` until it
+    /// has been opened where the system says where windows are.
+    pub test_movie_pos: Option<[f32; 2]>,
 }
+
+/// Most publish presets kept, and the longest name one has.
+pub const MAX_PUBLISH_PRESETS: usize = 100;
+pub const MAX_PRESET_NAME: usize = 64;
 
 /// Onion skin options that carry over between sessions (ADR 0047). Whether onion skin and Edit
 /// Multiple Frames are on, and anchored markers, last for the session only, as in Animate.
@@ -130,18 +155,38 @@ impl Default for Prefs {
             ui_font: FontChoice::Bundled,
             data_font: FontChoice::Bundled,
             theme: crate::theme::Palette::Graphite,
+            theme_follows_system: None,
             ui_scale: 1.0,
             render_mode: RenderMode::Auto,
             stage_renderer: StageRenderer::Gpu,
             native_dialogs: true,
             timeline_start_gap: 0.0,
+            timeline_short_rows: false,
             shortcuts: Default::default(),
             autosave: true,
             autosave_secs: 60,
             autosave_edits: 25,
             onion: OnionPrefs::default(),
+            publish_presets: Default::default(),
+            recent: Default::default(),
+            start_screen: true,
+            test_movie_window: true,
+            test_movie_pos: None,
         }
     }
+}
+
+/// The recent files as written, skipping entries that aren't one (a hand-edited file): one bad
+/// entry must not reset every preference.
+fn lenient_recent<'de, D: serde::Deserializer<'de>>(d: D) -> Result<anicraft_engine::cmds_recent::RecentFiles, D::Error> {
+    use anicraft_engine::cmds_recent::{RecentFile, RecentFiles};
+    let v = serde_json::Value::deserialize(d)?;
+    let list: Vec<serde_json::Value> = match v {
+        serde_json::Value::Array(a) => a.into_iter().take(1000).collect(),
+        _ => Vec::new(),
+    };
+    let good: Vec<RecentFile> = list.into_iter().filter_map(|x| serde_json::from_value::<RecentFile>(x).ok()).collect();
+    Ok(serde_json::from_value::<RecentFiles>(serde_json::to_value(good).unwrap_or_default()).unwrap_or_default())
 }
 
 /// Autosave intervals offered in Preferences: `(seconds, label)`.
@@ -153,6 +198,21 @@ pub const SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.75..=2.0;
 pub const GAP_RANGE: std::ops::RangeInclusive<f32> = 0.0..=48.0;
 
 impl Prefs {
+    /// Whether the theme follows the system's contrast setting ("Follow system", the default).
+    pub fn follows_system(&self) -> bool {
+        self.theme_follows_system.unwrap_or(self.theme != crate::theme::Palette::HighContrast)
+    }
+
+    /// The palette to draw with, given what the system says about contrast (`None`: it
+    /// doesn't say, or hasn't yet).
+    pub fn palette(&self, system_high_contrast: Option<bool>) -> crate::theme::Palette {
+        match (self.follows_system(), system_high_contrast) {
+            (true, Some(true)) => crate::theme::Palette::HighContrast,
+            (true, _) => crate::theme::Palette::Graphite,
+            (false, _) => self.theme,
+        }
+    }
+
     pub fn sanitized(mut self) -> Prefs {
         self.ui_scale = if self.ui_scale.is_finite() { self.ui_scale.clamp(*SCALE_RANGE.start(), *SCALE_RANGE.end()) } else { 1.0 };
         self.timeline_start_gap = if self.timeline_start_gap.is_finite() { self.timeline_start_gap.clamp(*GAP_RANGE.start(), *GAP_RANGE.end()) } else { 0.0 };
@@ -171,6 +231,17 @@ impl Prefs {
         self.autosave_edits = self.autosave_edits.min(*AUTOSAVE_EDITS_RANGE.end());
         self.onion.before = self.onion.before.min(ONION_REACH_MAX);
         self.onion.after = self.onion.after.min(ONION_REACH_MAX);
+        self.publish_presets = std::mem::take(&mut self.publish_presets)
+            .into_iter()
+            .filter(|(name, _)| !name.trim().is_empty() && name.chars().count() <= MAX_PRESET_NAME)
+            .take(MAX_PUBLISH_PRESETS)
+            .map(|(name, mut p)| {
+                p.sanitize();
+                (name, p)
+            })
+            .collect();
+        self.recent = std::mem::take(&mut self.recent).sanitized();
+        self.test_movie_pos = self.test_movie_pos.filter(|[x, y]| x.is_finite() && y.is_finite() && x.abs() < 1e5 && y.abs() < 1e5);
         self
     }
 
@@ -232,6 +303,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_theme_follows_the_system_unless_one_was_chosen() {
+        use crate::theme::Palette;
+        // New installs, and files from before ADR 0064 that kept the default, follow the system.
+        for p in [Prefs::default(), Prefs::from_json(r#"{"theme": "Graphite"}"#)] {
+            assert!(p.follows_system());
+            assert_eq!(p.palette(Some(true)), Palette::HighContrast);
+            assert_eq!(p.palette(Some(false)), Palette::Graphite);
+            assert_eq!(p.palette(None), Palette::Graphite, "a system that doesn't say: graphite");
+        }
+        // A file that chose high contrast keeps it whatever the system says.
+        let hc = Prefs::from_json(r#"{"theme": "HighContrast"}"#);
+        assert!(!hc.follows_system());
+        assert_eq!(hc.palette(Some(false)), Palette::HighContrast);
+        // Graphite chosen by hand stays graphite; the choice survives a round trip.
+        let manual = Prefs { theme_follows_system: Some(false), ..Prefs::default() };
+        assert_eq!(manual.palette(Some(true)), Palette::Graphite);
+        let back = Prefs::from_json(&serde_json::to_string(&manual).unwrap_or_default());
+        assert_eq!(back.theme_follows_system, Some(false));
+        assert!(!serde_json::to_string(&Prefs::default()).unwrap_or_default().contains("theme_follows_system"), "nothing new written until chosen");
+    }
+
+    #[test]
     fn system_font_scan_is_safe_and_loads_a_face() {
         // Machine-dependent (CI containers may have no fonts); must never panic.
         let fonts = SystemFonts::scan();
@@ -241,6 +334,24 @@ mod tests {
             assert!(fonts.regular(first).is_some_and(|(bytes, _)| !bytes.is_empty()), "{first}");
         }
         assert!(fonts.regular("No Such Font Family 12345").is_none());
+    }
+
+    #[test]
+    fn publish_presets_round_trip_and_hostile_ones_are_dropped() {
+        let mut gif = anicraft_engine::doc::publish::PublishProfile::default();
+        gif.gif.enabled = true;
+        gif.gif.scale = 0.5;
+        let mut p = Prefs::default();
+        p.publish_presets.insert("Web small".into(), gif.clone());
+        let back = Prefs::from_json(&serde_json::to_string(&p).unwrap());
+        assert_eq!(back.publish_presets.get("Web small"), Some(&gif));
+        let hostile = format!(r#"{{"publish_presets": {{"": {{}}, "{}": {{}}, "ok": {{"gif": {{"scale": 1e30}}, "audio": {{"bits": 3}}}}, "junk": 5}}}}"#, "n".repeat(100));
+        let p = Prefs::from_json(&hostile);
+        assert!(p.publish_presets.is_empty() || p.publish_presets.len() == 1, "{:?}", p.publish_presets.keys());
+        if let Some(ok) = p.publish_presets.get("ok") {
+            assert_eq!((ok.gif.scale, ok.audio.bits), (anicraft_engine::doc::publish::MAX_PUBLISH_SCALE, 16));
+        }
+        assert_eq!(Prefs::from_json(r#"{"publish_presets": {"": {}, "a": {"gif": {"enabled": true}}}}"#).publish_presets.len(), 1);
     }
 
     #[test]
@@ -273,5 +384,24 @@ mod tests {
         let p = Prefs::from_json(r#"{"autosave": false, "autosave_secs": 1, "autosave_edits": 99999999}"#);
         assert!(!p.autosave);
         assert_eq!((p.autosave_secs, p.autosave_edits), (15, 1000));
+        // Older files have no recent files and show the start screen (ADR 0059); a list
+        // someone edited by hand is cleaned up.
+        let p = Prefs::from_json(r#"{"ui_scale": 1.25}"#);
+        assert!(p.recent.is_empty() && p.start_screen);
+        let p = Prefs::from_json(r#"{"recent": [{"path": "a.anicraft"}, {"path": "a.anicraft"}, {"path": ""}, 7], "start_screen": false}"#);
+        let paths: Vec<_> = p.recent.entries().iter().map(|e| e.path.display().to_string()).collect();
+        assert_eq!(paths, ["a.anicraft"], "bad entries are skipped, the rest kept");
+        assert!(!p.start_screen, "and the other preferences with them");
+        // Older files open Test Movie in its own window, with no remembered place (ADR 0062);
+        // a place someone broke by hand is forgotten, not used.
+        let p = Prefs::from_json(r#"{"ui_scale": 1.25}"#);
+        assert!(p.test_movie_window && p.test_movie_pos.is_none());
+        let p = Prefs::from_json(r#"{"test_movie_window": false, "test_movie_pos": [120.5, 80]}"#);
+        assert_eq!((p.test_movie_window, p.test_movie_pos), (false, Some([120.5, 80.0])));
+        assert_eq!(Prefs::from_json(r#"{"test_movie_pos": [1e9, 0]}"#).test_movie_pos, None);
+        assert_eq!(Prefs::from_json(&serde_json::to_string(&p).unwrap()), p, "both survive saving");
+        let p = Prefs::from_json(r#"{"recent": [{"path": "b.anicraft"}, {"path": "a.anicraft", "pinned": true}, {"path": "b.anicraft"}]}"#);
+        let paths: Vec<_> = p.recent.entries().iter().map(|e| (e.path.display().to_string(), e.pinned)).collect();
+        assert_eq!(paths, [("a.anicraft".to_string(), true), ("b.anicraft".to_string(), false)]);
     }
 }

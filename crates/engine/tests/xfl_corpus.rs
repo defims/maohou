@@ -29,17 +29,20 @@ fn corpus() -> PathBuf {
 /// The frames rendered for each package (frames count across scenes, from 0).
 const FRAMES: &[(&str, &[u32])] = &[
     ("bitmaps", &[0]),
+    ("colour", &[0, 6, 12]),
     ("filters", &[0]),
     ("gradients", &[0]),
     ("guides", &[0, 6, 12]),
     ("interactive", &[0, 9]),
     ("masks", &[0]),
+    ("nineslice", &[0]),
     ("primitives", &[0]),
     ("scenes", &[0, 3, 7, 8, 10]),
     ("scripts", &[0, 4]),
     ("shapes", &[0]),
     ("symbols", &[0, 5]),
     ("text", &[0]),
+    ("textfields", &[0]),
     ("tweens", &[0, 6, 12]),
 ];
 
@@ -73,9 +76,27 @@ const PROBES: &[(&str, u32, f32, f32, u32)] = &[
     ("symbols", 5, 130.0, 40.0, 0x457B9D),
     // The button's Up frame.
     ("symbols", 0, 82.0, 130.0, 0x2A9D8F),
-    // Brightness +60% and -50% of #6D597A.
+    // Brightness +60% and -50% of #6D597A; Advanced: red ×20 %, green +120, at 80 % over white.
     ("symbols", 0, 230.0, 130.0, 0xC5BDCA),
     ("symbols", 0, 260.0, 130.0, 0x372D3D),
+    ("symbols", 0, 290.0, 130.0, 0x44DA95),
+    // Colour effects on #2A9D8F (ADR 0056): None, Brightness +50 %, Tint 60 % #E9C46A, Advanced
+    // (red −100 % +255, green 50 %, blue −60), Alpha 25 % over white.
+    ("colour", 0, 30.0, 40.0, 0x2A9D8F),
+    ("colour", 0, 90.0, 40.0, 0x94CEC7),
+    ("colour", 0, 150.0, 40.0, 0x9DB479),
+    ("colour", 0, 210.0, 40.0, 0xD54F53),
+    ("colour", 0, 270.0, 40.0, 0xCAE6E3),
+    // Brightness −40 % around a 50 % red tint: both, exactly (not the stronger one alone).
+    ("colour", 0, 60.0, 110.0, 0x592F2B),
+    // Tint #264653 to Advanced: the ends, and halfway in the advanced space.
+    ("colour", 0, 160.0, 105.0, 0x264653),
+    ("colour", 6, 220.0, 105.0, 0x614771),
+    ("colour", 12, 280.0, 105.0, 0x944C8D),
+    // Brightness −100 % to +60 %: halfway is brightness −20 % (not the transforms' midpoint).
+    ("colour", 0, 160.0, 152.0, 0x000000),
+    ("colour", 6, 220.0, 152.0, 0x227E72),
+    ("colour", 12, 280.0, 152.0, 0xAAD8D2),
     ("tweens", 0, 20.0, 25.0, 0xF4A261),
     ("tweens", 12, 300.0, 25.0, 0xF4A261),
     // Masked stripes: inside the spot, and outside it.
@@ -84,6 +105,14 @@ const PROBES: &[(&str, u32, f32, f32, u32)] = &[
     ("masks", 0, 10.0, 22.0, 0xFFFFFF),
     ("masks", 0, 145.0, 10.0, 0xFFFFFF),
     ("masks", 0, 270.0, 70.0, 0xCB997E),
+    // 9-slice (ADR 0055): the stretched panel's top-left corner keeps its radius-10 curve (plain
+    // scaling would leave the background there), its middle is the panel, and the graphic inside
+    // it scales normally (a dot 2.8 times as wide).
+    ("nineslice", 0, 27.0, 113.0, 0x2A9D8F),
+    ("nineslice", 0, 137.0, 13.0, 0x2A9D8F),
+    ("nineslice", 0, 100.0, 125.0, 0x2A9D8F),
+    ("nineslice", 0, 151.0, 130.0, 0xE9C46A),
+    ("nineslice", 0, 21.0, 111.0, 0xF1FAEE),
     // Guide artwork never draws.
     ("guides", 0, 5.0, 5.0, 0xFFFFFF),
     ("guides", 0, 160.0, 60.0, 0xFFFFFF),
@@ -98,6 +127,10 @@ const PROBES: &[(&str, u32, f32, f32, u32)] = &[
     ("scripts", 4, 160.0, 90.0, 0xE76F51),
     ("scripts", 4, 240.0, 90.0, 0xF4F1EA),
     ("text", 0, 300.0, 80.0, 0xE9EDC9),
+    // Fields draw their box (white behind a border) with no fonts at all (ADR 0066).
+    ("text", 0, 290.0, 134.0, 0xFFFFFF),
+    ("textfields", 0, 100.0, 30.0, 0xFFFFFF),
+    ("textfields", 0, 300.0, 170.0, 0xF4F1EA),
 ];
 
 fn import(case: &str) -> Document {
@@ -190,7 +223,7 @@ fn every_package_opens_with_file_open_and_round_trips_through_the_file_format() 
 fn raw_shapes_open_raw_merged_and_unchanged_to_the_eye() {
     let mut failures = Vec::new();
     let (mut raw_total, mut merged_total) = (0, 0);
-    for (case, frames) in FRAMES.iter().filter(|(c, _)| !matches!(*c, "text")) {
+    for (case, frames) in FRAMES.iter().filter(|(c, _)| !matches!(*c, "text" | "textfields")) {
         let mut s = Session::default();
         let info = s.execute("file.open", &json!({"path": corpus().join(case).display().to_string()})).unwrap_or_else(|e| panic!("{case}: {e}"));
         let raw = s.doc.scenes.iter().flat_map(|sc| sc.timeline.layers.iter()).chain(s.doc.library.iter().flat_map(|sym| sym.timeline.layers.iter())).flat_map(|l| l.keyframes.iter()).flat_map(|k| k.elements.iter()).filter(|e| matches!(&e.kind, anicraft_engine::doc::ElementKind::Shape(sh) if sh.merge)).count();
