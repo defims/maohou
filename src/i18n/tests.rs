@@ -145,6 +145,12 @@ fn all_keys() -> BTreeSet<Key> {
         add(m.label());
         add(m.hint());
     }
+    // The brush library (ADR 0068): built-in brushes, their hints and the pressure curves.
+    for (k, n) in anicraft_engine::brush_library::BUILTIN {
+        add(n);
+        add(anicraft_engine::brush_library::builtin_hint(k));
+    }
+    anicraft_engine::geom::pressure::CURVE_PRESETS.iter().for_each(|(_, l)| add(l));
     keys
 }
 
@@ -448,9 +454,6 @@ fn strings_in(v: &serde_json::Value, out: &mut BTreeSet<String>) {
 
 /// Names egui gives its own parts.
 const EGUI_OWN: [&str; 1] = ["Close window"];
-/// The product name never translates (docs/localisation.md); the platform layer names the
-/// unified title bar's app button with it, the way it names menus.
-const PRODUCT_NAME: [&str; 1] = ["AniCraft"];
 
 /// Names a screen reader would announce that are still plain English in the pseudo-locale,
 /// for the window after `setup` (a few frames to settle).
@@ -482,8 +485,9 @@ fn plain_names(what: &str, app: &crate::app::App, nodes: Vec<(egui::accesskit::N
     for (_, n) in nodes {
         for name in [n.label(), n.description()].into_iter().flatten() {
             // egui names its own window close button; it offers no way to name it ourselves
-            // (docs/localisation.md › Not yet).
-            let translated = name.chars().any(pseudo::is_accented) || EGUI_OWN.contains(&name) || PRODUCT_NAME.contains(&name);
+            // (docs/localisation.md › Not yet). The product name stays as it is in every
+            // language (the macOS app menu is titled with it, ADR 0006), as the source scan allows.
+            let translated = name.chars().any(pseudo::is_accented) || EGUI_OWN.contains(&name) || name == "AniCraft";
             let ours = scan::is_prose(name) && !doc_text.contains(name) && !doc_text.iter().any(|d| name.contains(d.as_str()));
             if ours && !translated {
                 found.insert(format!("[{what}] {:?} {name:?}", n.role()));
@@ -590,7 +594,7 @@ fn every_control_can_be_used_in_the_pseudo_locale() {
             a.run("element.set_color_effect", serde_json::json!({"style": style}));
         }));
     }
-    for panel in ["sound", "camera", "motion", "motionpins", "actions", "script", "prefs", "envelope", "onionmenu", "editmultiple", "edittransform", "onionsymbol", "find", "explorer", "publish", "publishreport", "publishanim", "start", "testmovie", "testmovieinside", "templates", "savetemplate"] {
+    for panel in ["sound", "camera", "motion", "motionpins", "actions", "script", "prefs", "envelope", "onionmenu", "editmultiple", "edittransform", "onionsymbol", "find", "explorer", "publish", "publishreport", "publishanim", "start", "testmovie", "testmovieinside", "templates", "savetemplate", "brushlibrary", "brushcurve"] {
         found.extend(click_everything(panel, |a, _| a.open_panel(Some(panel))));
     }
     // Test Movie in a window of its own (ADR 0062; egui stands in for the window system here).
@@ -598,7 +602,7 @@ fn every_control_can_be_used_in_the_pseudo_locale() {
         ctx.set_embed_viewports(false);
         a.open_panel(Some("testmovie"));
     }));
-    for tool in [crate::app::Tool::Brush, crate::app::Tool::Eraser, crate::app::Tool::PaintBucket, crate::app::Tool::Pencil, crate::app::Tool::Width] {
+    for tool in [crate::app::Tool::Brush, crate::app::Tool::PaintBrush, crate::app::Tool::Eraser, crate::app::Tool::PaintBucket, crate::app::Tool::Pencil, crate::app::Tool::Width] {
         found.extend(click_everything(&format!("{tool:?}"), |a, _| a.tool = tool));
     }
     assert!(found.is_empty(), "{} things in plain English after using the controls:\n{}", found.len(), found.join("\n"));
