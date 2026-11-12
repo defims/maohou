@@ -13,6 +13,7 @@ crates/plugins  L0  Sandboxed WebAssembly plug-ins: wasmi host, ABI v1, limits, 
 crates/audio    L0  Sound decoding (WAV, Ogg Vorbis, MP3), pure mixing and resampling, WAV, peaks (ADR 0020)
 crates/actions  L0  Timeline action IR: stop/play/goto, targets, button events, frame scripts (ADR 0024)
 crates/media    L0  Built-in VP9/Opus encoders, WebM/MP4 muxers, zip and JPEG writers behind the exports (ADR 0107)
+crates/guide    L0  The user guide (docs/guide) as a bundled static HTML book, with its link checks (ADR 0069)
 crates/doc      L1  Document model, easing, timeline evaluation, the interactive player, sample scene
 crates/text     L1  Fonts on this computer, shaping and line layout into outlines (ADR 0012)
 crates/render   L2  CPU oracle renderer (coverage accumulation, paints, strokes, PNG)
@@ -21,7 +22,7 @@ crates/svg      L2  SVG import: shapes, groups, use, styles, gradients, clips/ma
 crates/mohoproj-import L2  Moho import/export: .mohoproj/.moho JSON + zip readers/writers, mesh → paths, sidecar (ADR 0101, 0107)
 crates/engine   L3  Session, undo (with gesture coalescing), command registry, .anicraft format
 crates/gpu      L3  wgpu stage renderer (the default stage): tile binning, compute coverage, bitmaps, filters (ADR 0019, 0029, 0032)
-crates/cli      L4  anicraft-cli: info/render/render-seq/commands/exec/run/new/serve/mcp
+crates/cli      L4  anicraft-cli: info/render/render-seq/commands/exec/run/new/guide/serve/mcp
 src/            L5  egui shell (app, menus, stage, timeline, panels, theme)
 ```
 

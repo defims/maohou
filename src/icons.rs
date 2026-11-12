@@ -20,6 +20,7 @@ pub enum Icon {
     Pen,
     Pencil,
     Brush,
+    PaintBrush,
     Eraser,
     Eyedropper,
     Rect,
@@ -75,7 +76,7 @@ pub enum Icon {
 
 impl Icon {
     #[cfg(test)]
-    pub const ALL: [Icon; 55] = [
+    pub const ALL: [Icon; 56] = [
         Icon::Layer,
         Icon::EditMultiple,
         Icon::Magnet,
@@ -106,6 +107,7 @@ impl Icon {
         Icon::Pen,
         Icon::Pencil,
         Icon::Brush,
+        Icon::PaintBrush,
         Icon::Eraser,
         Icon::Eyedropper,
         Icon::Rect,
@@ -152,6 +154,9 @@ impl Icon {
             Icon::Pencil => ("pencil", false),
             // A round brush: handle, ferrule and a painted tip (AniCraft original, on Lucide's grid).
             Icon::Brush => ("anicraft-brush", false),
+            // The brush over a swelling and thinning line: the Paint Brush draws strokes
+            // (AniCraft original, on Lucide's grid).
+            Icon::PaintBrush => ("anicraft-paint-brush", false),
             // A block eraser on its edge, its sleeve marked off (AniCraft original).
             Icon::Eraser => ("anicraft-eraser", false),
             // A dropper: bulb, collar, glass tube and a drop (AniCraft original).
@@ -263,6 +268,7 @@ static FILES: &[(&str, &str)] = &[
     ("anicraft-width", include_str!("../assets/icons/anicraft-width.svg")),
     ("anicraft-brush", include_str!("../assets/icons/anicraft-brush.svg")),
     ("anicraft-eraser", include_str!("../assets/icons/anicraft-eraser.svg")),
+    ("anicraft-paint-brush", include_str!("../assets/icons/anicraft-paint-brush.svg")),
     ("anicraft-eyedropper", include_str!("../assets/icons/anicraft-eyedropper.svg")),
     ("anicraft-masked", include_str!("../assets/icons/anicraft-masked.svg")),
     ("anicraft-layer", include_str!("../assets/icons/anicraft-layer.svg")),
