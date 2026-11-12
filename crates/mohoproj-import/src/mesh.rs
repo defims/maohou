@@ -58,6 +58,36 @@ pub(crate) struct MeshData {
     pub(crate) colors: Vec<Option<Rgba>>,
 }
 
+/// One curve of the mesh as its own path (Moho inches) — the Follow Path relation's
+/// target geometry (ADR 0109): a followed curve may belong to no shape of its own.
+pub(crate) fn curve_path(data: &MeshData, curve_index: usize) -> Option<Path> {
+    let curve = data.curves.get(curve_index)?;
+    let n = curve.pts.len();
+    if n < 2 {
+        return None;
+    }
+    let mut path = Path::default();
+    let first = data.positions.get(curve.pts[0].point)?;
+    path.cmds.push(PathCmd::MoveTo(*first));
+    let segments = if curve.closed { n } else { n - 1 };
+    for si in 0..segments {
+        let after = if si + 1 < n { si + 1 } else { 0 };
+        let (a, d) = (&curve.pts[si], &curve.pts[after]);
+        let (Some(p0), Some(p1)) = (data.positions.get(a.point), data.positions.get(d.point)) else { return None };
+        let h0 = handle(data, curve, si, false);
+        let h1 = handle(data, curve, after, true);
+        if h0.length() > 1e-9 || h1.length() > 1e-9 {
+            path.cmds.push(PathCmd::CubicTo(*p0 + h0, *p1 + h1, *p1));
+        } else {
+            path.cmds.push(PathCmd::LineTo(*p1));
+        }
+    }
+    if curve.closed {
+        path.cmds.push(PathCmd::Close);
+    }
+    Some(path)
+}
+
 /// Builds the shape elements of one mesh. `world` is the layer's own inch-space transform
 /// (ancestors live on their folder layers since stage 3).
 pub(crate) fn mesh_elements(b: &mut Builder, mesh: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {

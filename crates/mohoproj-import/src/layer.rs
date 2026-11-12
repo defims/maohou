@@ -17,12 +17,13 @@
 
 use crate::anim;
 use crate::channel::{self, Channel};
-use crate::import::{Builder, MOHO_DPI};
+use crate::import::{Builder, FollowRequest, MOHO_DPI};
+use anicraft_doc::{ColorEffect, Shape};
 use crate::json::{self, array, get};
 use crate::{audio, image, mesh};
 use crate::text;
 use anicraft_doc::{Element, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind};
-use anicraft_geom::Affine;
+use anicraft_geom::{Affine, FillRule};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -48,9 +49,22 @@ enum Content<'doc> {
 }
 
 /// What a layer inherits from its ancestors: where it sits in the tree (a container's
-/// children name it as their parent; evaluation chains its transform and effects).
+/// children name it as their parent; evaluation chains its transform and effects), whether
+/// it is a mask member of a masking group (it becomes the mask layer the group's clip
+/// forms from, drawing itself when the Moho member did), and whether a masking group with
+/// no region to show it (it doesn't).
+#[derive(Clone, Copy)]
 pub(crate) struct Inherit {
     pub parent: Option<LayerId>,
+    pub mask_clip: bool,
+    pub drawn: bool,
+    pub hidden: bool,
+}
+
+impl Inherit {
+    pub(crate) fn under(parent: Option<LayerId>) -> Self {
+        Self { parent, mask_clip: false, drawn: false, hidden: false }
+    }
 }
 
 /// Walks Moho's layer array (bottom-first) into `out` (top-first, containers first).
@@ -68,13 +82,165 @@ pub(crate) fn walk(b: &mut Builder, layers: &[Value], into: &Inherit, depth: usi
     }
 }
 
-fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out: &mut Vec<FlatLayer>) {
-    let ty = json::string(get(layer, "type")).unwrap_or_default();
+/// Moho's per-layer mask role (`masking`; the scripting API's MOHO.MM_* constants):
+/// 0 = masked (draws only in the group's mask region), 1 = not masked (draws everywhere),
+/// 2 = "+ Add to mask" (draws and defines the region), 3 = subtract from it, 4 = add but
+/// keep invisible, 5 = subtract but keep invisible, 6/7 = clear the mask, then add
+/// (drawn/invisible). Only a group whose `group_mask` is 2 applies it — the scripting API
+/// constants name the modes "0 = none, 1 = turn on masking, initially showing all
+/// sub-layers, 2 = … hiding all sub-layers"; mode 2 is the manual's "Hide all".
+fn mask_role(layer: &Value) -> i64 {
+    json::integer(get(layer, "masking")).unwrap_or(0).clamp(0, 7)
+}
+
+fn layer_type(layer: &Value) -> String {
+    json::string(get(layer, "type")).unwrap_or_default()
+}
+
+/// The leaf types whose artwork can form a mask (a group with bones or variants cannot sit
+/// under a mask in AniCraft's flat timeline: [`anicraft_doc::Timeline::repair_masks`]
+/// re-parents anything but a normal layer out of one).
+fn can_mask(layer: &Value) -> bool {
+    matches!(layer_type(layer).as_str(), "MeshLayer" | "ImageLayer" | "TextLayer")
+}
+
+/// A masking group (`group_mask` 2): Moho hides everything in the group until the mask
+/// members' fills say where the members may draw. AniCraft says exactly that with a mask
+/// layer and the masked members as its children, the mask first so the run stays unbroken
+/// (ADR 0108): a mask member that drew itself (roles 2/6) imports with `mask_draws`, an
+/// invisible one (4/7) clips alone. What has no slot is counted: past the first mask
+/// member extra ones don't reach the single clip, subtracting (3/5) cuts nothing, a mask
+/// role on a container or a content-less layer does nothing, and a container cannot sit
+/// under a mask. With no region at all Moho shows nothing, so the members import hidden.
+fn walk_masked_group(b: &mut Builder, kids: &[Value], into: &Inherit, depth: usize, out: &mut Vec<FlatLayer>) {
+    let add = |k: &Value| matches!(mask_role(k), 2 | 4 | 6 | 7);
+    let mut clip: Option<LayerId> = None;
+    let mut past_first = false;
+    for k in kids.iter().rev().filter(|k| add(k) && can_mask(k)) {
+        let as_mask = Inherit { parent: into.parent, mask_clip: true, drawn: matches!(mask_role(k), 2 | 6), hidden: false };
+        if let Some(id) = build_layer(b, k, &as_mask, depth, out) {
+            if clip.is_none() {
+                clip = Some(id);
+            } else {
+                past_first = true;
+            }
+        }
+    }
+    if past_first {
+        b.report.skip("mask layers past the first in a group (only the first clips)");
+    }
+    if kids.iter().any(|k| add(k) && !can_mask(k)) {
+        b.report.skip("mask roles on layers that cannot mask");
+    }
+    let subtracted = kids.iter().filter(|k| matches!(mask_role(k), 3 | 5)).count();
+    if subtracted > 0 {
+        b.report.skip("subtract-from-mask layers (nothing is subtracted)");
+    }
+    if kids.iter().any(|k| matches!(mask_role(k), 6 | 7)) {
+        b.report.skip("clear-mask mask members (the union acts as one mask)");
+    }
+    // Members: the masked ones (role 0) under the mask; the unmasked (1), the subtracting
+    // (3, drawn) and the ones without a clip to fall under draw beside it — a subtract
+    // that keeps invisible (5) hides itself as in Moho.
+    let hidden_group = clip.is_none() && subtracted == 0;
+    for k in kids.iter().rev().filter(|k| !add(k) || !can_mask(k)) {
+        let member_into = if mask_role(k) == 0 && is_container(k) {
+            if clip.is_some() {
+                b.report.skip("groups inside a masked group (they import unmasked)");
+            }
+            Inherit { hidden: hidden_group, ..*into }
+        } else if mask_role(k) == 5 {
+            Inherit { parent: into.parent, mask_clip: false, drawn: false, hidden: true }
+        } else if mask_role(k) == 0 && let Some(c) = clip {
+            Inherit { parent: Some(c), mask_clip: false, drawn: false, hidden: false }
+        } else {
+            Inherit { hidden: hidden_group, ..*into }
+        };
+        build_layer(b, k, &member_into, depth, out);
+    }
+}
+
+fn is_container(layer: &Value) -> bool {
+    matches!(layer_type(layer).as_str(), "GroupLayer" | "BoneLayer" | "SwitchLayer")
+}
+
+/// Resolves the Follow Path relations seen during the walk (ADR 0109): the followed curve
+/// flattens onto its target layer as an invisible shape (it may belong to no shape of its
+/// own, and the relation needs its geometry), and the follower carries the relation — its
+/// target, the curve element, the animated progress, rotate to follow and bend with curve.
+pub(crate) fn resolve_follows(b: &mut Builder, flat: &mut [FlatLayer], layers: &[Value]) {
+    for r in std::mem::take(&mut b.follows) {
+        let Some(&target_id) = b.uuids.get(&r.target_uuid) else {
+            b.report.skip("follow-path relations (their target layer is missing)");
+            continue;
+        };
+        let Some(target_value) = find_layer(layers, &r.target_uuid) else { continue };
+        let Some(target_index) = flat.iter().position(|f| f.layer.id == target_id) else { continue };
+        let (ok, el_id) = build_follow(b, &mut flat[target_index].layer, target_value, r.curve);
+        if !ok {
+            b.report.skip("follow-path relations (their curve is unreadable)");
+            continue;
+        }
+        let mut following = anicraft_doc::Channel::default();
+        anim::read_channel_value(&mut following, &r.following, &mut b.report, 0, |ch, i| channel::sample_f64_at(ch, i).unwrap_or(0.0) as f32);
+        let Some(follower) = flat.iter_mut().find(|f| f.layer.id == r.follower) else { continue };
+        follower.layer.follow = Some(anicraft_doc::FollowPath { target: target_id, element: el_id, subpath: 0, following, rotate: r.rotate, bending: r.bending });
+    }
+}
+
+/// Flattens the followed curve onto the target layer's first keyframe as an invisible
+/// shape (a path with no fill and no stroke draws nothing); returns the element's id.
+fn build_follow(b: &mut Builder, target: &mut Layer, target_value: &Value, curve: usize) -> (bool, anicraft_doc::ElementId) {
+    let data = mesh::parse_mesh(b, get(target_value, "mesh").unwrap_or(&Value::Null));
+    let Some(path) = data.as_ref().and_then(|d| mesh::curve_path(d, curve)) else {
+        return (false, anicraft_doc::ElementId(b.doc.alloc_id()));
+    };
+    let to_px = b.to_px;
+    let transform = to_px.mul(&layer_transform(b, target_value));
+    let el_id = anicraft_doc::ElementId(b.doc.alloc_id());
+    let el = Element {
+        id: el_id,
+        name: String::new(),
+        transform,
+        color: ColorEffect::default(),
+        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None, texture: None }),
+    };
+    if let Some(kf) = target.keyframes.first_mut() {
+        Arc::make_mut(kf).elements.push(Arc::new(el));
+    }
+    (true, el_id)
+}
+
+/// Finds a layer by its Moho uuid, anywhere in the inline tree.
+fn find_layer<'v>(layers: &'v [Value], uuid: &str) -> Option<&'v Value> {
+    for l in layers {
+        if json::string(get(l, "uuid")).as_deref() == Some(uuid) {
+            return Some(l);
+        }
+        if let Some(found) = array(get(l, "layers")).and_then(|kids| find_layer(kids, uuid)) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out: &mut Vec<FlatLayer>) -> Option<LayerId> {
+    let ty = layer_type(layer);
     let name = json::string(get(layer, "name")).unwrap_or_else(|| "Layer".into());
     let id = LayerId(b.doc.alloc_id());
     let mut l = Layer::new(id, name);
     l.parent = into.parent;
-    l.visible = layer_visibility(b, layer);
+    // The Follow Path relations reference layers by Moho uuid (ADR 0109).
+    if let Some(u) = json::string(get(layer, "uuid")).filter(|u| !u.is_empty()) {
+        b.uuids.insert(u, id);
+    }
+    // The smart-bone action membership table: which rig actions the layer belongs to
+    // (the poses themselves ride the skeleton's channels; ADR 0104).
+    for a in array(get(layer, "actions")).unwrap_or(&[]) {
+        let Some(name) = json::string(get(a, "name")).filter(|n| !n.is_empty()) else { continue };
+        l.smart_actions.push(anicraft_doc::SmartActionRef { name, pose: json::integer(get(a, "pose")).unwrap_or(0) });
+    }
+    l.visible = layer_visibility(b, layer) && !into.hidden;
     // The layer's effect stack: opacity and the static filters (ADR 0103). Any layer kind
     // carries them in Moho.
     l.opacity = layer_opacity(b, layer);
@@ -119,18 +285,39 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
         world = layer_transform(b, layer);
     }
     match ty.as_str() {
-        "MeshLayer" => {
+        "MeshLayer" | "ImageLayer" | "TextLayer" => {
             count_layer_extras(b, layer);
-            let m = get(layer, "mesh").unwrap_or(&Value::Null);
-            finish_leaf(b, l, world, Content::Mesh(m), parent_bone(layer), out);
-        }
-        "ImageLayer" => {
-            count_layer_extras(b, layer);
-            finish_leaf(b, l, world, Content::Image(layer), parent_bone(layer), out);
-        }
-        "TextLayer" => {
-            count_layer_extras(b, layer);
-            finish_leaf(b, l, world, Content::Text(layer), parent_bone(layer), out);
+            // A Follow Path relation resolves after the walk (the target may come later in
+            // Moho's bottom-first array than its follower): record it here (ADR 0109).
+            let target_uuid = json::string(get(layer, "follow_layer_uuid")).unwrap_or_default();
+            if !target_uuid.is_empty()
+                && let Some(curve) = json::integer(get(layer, "follow_curve")).filter(|c| *c >= 0)
+            {
+                b.follows.push(FollowRequest {
+                    follower: id,
+                    target_uuid,
+                    curve: curve as usize,
+                    rotate: json::boolean(get(layer, "rotate_to_follow")).unwrap_or(false),
+                    bending: json::boolean(get(layer, "follow_bending")).unwrap_or(false),
+                    following: get(layer, "transforms").and_then(|t| get(t, "following")).cloned().unwrap_or(Value::Null),
+                });
+            }
+            // A mask member of a masking group becomes the mask itself: its fills clip the
+            // group's other members (walk_masked_group parents them), and draw beneath
+            // them when the Moho member drew itself (ADR 0108).
+            if into.mask_clip {
+                l.kind = LayerKind::Mask;
+                l.mask_draws = into.drawn;
+            }
+            match ty.as_str() {
+                "MeshLayer" => {
+                    let m = get(layer, "mesh").unwrap_or(&Value::Null);
+                    finish_leaf(b, l, world, Content::Mesh(m), parent_bone(layer), out);
+                }
+                "ImageLayer" => finish_leaf(b, l, world, Content::Image(layer), parent_bone(layer), out),
+                _ => finish_leaf(b, l, world, Content::Text(layer), parent_bone(layer), out),
+            }
+            return Some(id);
         }
         "GroupLayer" | "BoneLayer" | "SwitchLayer" => {
             l.kind = match ty.as_str() {
@@ -150,8 +337,15 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
             count_layer_extras(b, layer);
             out.push(FlatLayer { layer: l });
             let kids = array(get(layer, "layers")).unwrap_or(&[]);
-            let kids_into = Inherit { parent: Some(id) };
-            walk(b, kids, &kids_into, depth + 1, out);
+            let kids_into = Inherit::under(Some(id));
+            // Moho's group masking ("all invisible"): members draw only inside the mask
+            // members' region. Any other group mode (none, "all visible") draws everyone.
+            if json::integer(get(layer, "group_mask")).unwrap_or(0) == 2 {
+                walk_masked_group(b, kids, &kids_into, depth + 1, out);
+            } else {
+                walk(b, kids, &kids_into, depth + 1, out);
+            }
+            return Some(id);
         }
         "NoteLayer" => b.report.skip("note layers"),
         "ParticleLayer" => b.report.skip("particle layers"),
@@ -160,10 +354,12 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
             count_layer_extras(b, layer);
             audio::audio_layer(b, layer, &mut l);
             out.push(FlatLayer { layer: l });
+            return Some(id);
         }
         "" => b.report.skip("layers without a type"),
         other => b.report.skip(&format!("layers of unknown type ({other})")),
     }
+    None
 }
 
 /// The plain `visible` bool ANDs with the (channelled) visibility switch of the effect stack.
@@ -240,26 +436,25 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     if json::integer(get(layer, "blend_mode")).is_some_and(|m| m != 0) {
         b.report.skip("layer blend modes");
     }
-    if !json::string(get(layer, "follow_layer_uuid")).is_none_or(|u| u.is_empty()) {
-        b.report.skip("follow-path relations (positions are already baked)");
-    }
-    if json::boolean(get(layer, "rotate_to_follow")).unwrap_or(false) {
-        b.report.skip("rotate to follow");
+    // The Follow Path relation itself resolves (ADR 0109); bending has no rendering slot:
+    // the vendor publishes no bend algorithm and the corpus has no bent specimen.
+    if json::boolean(get(layer, "follow_bending")).unwrap_or(false) {
+        b.report.skip("follow bending (the artwork rides the path, it does not bend)");
     }
     if ch("timeline_markers").is_some_and(|c| channel::sample_string(&c, frame).is_some_and(|s| !s.is_empty())) {
         b.report.skip("layer timeline markers");
     }
-    if array(get(layer, "actions")).is_some_and(|a| !a.is_empty()) {
-        *b.report.skipped.entry("smart bone action references".into()).or_default() += 1;
-    }
     if json::boolean(get(layer, "animated_layer_effects")).unwrap_or(false) {
         b.report.skip("animated layer effects");
     }
-    if json::integer(get(layer, "timing_offset")).is_some_and(|i| i != 0) {
-        b.report.skip("layer timing offsets");
+    // A timing offset on a content layer shifts its whole channel timeline; the audio
+    // layer's bar resolves in audio.rs instead. No corpus specimen shifts content, so it
+    // is counted until one does.
+    if json::integer(get(layer, "timing_offset")).unwrap_or(0) != 0 && layer_type(layer) != "AudioLayer" {
+        b.report.skip("layer timing offsets (their channels play shifted)");
     }
-    if json::integer(get(layer, "masking")).is_some_and(|m| m != 0) {
-        b.report.skip("mask layers (drawn unmasked)");
+    if json::boolean(get(layer, "mask_expansion")).unwrap_or(false) {
+        b.report.skip("mask expansion");
     }
     if json::integer(get(layer, "3d_mode")).is_some_and(|m| m != 0) {
         b.report.skip("3D layers");
@@ -282,8 +477,17 @@ fn read_physics_body(b: &mut Builder, layer: &Value) -> Option<anicraft_doc::Phy
         return None;
     }
     let ch = |k: &str| get(ph, k).and_then(Channel::parse);
-    if ch("motor_speed").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "enable_motor")).unwrap_or(false) {
-        b.report.skip("physics motors");
+    // Moho writes constant default motor keys on every body (the corpus's two keys carry
+    // the same π with the motor off): a motor matters only when it is on or its speed
+    // genuinely varies over time.
+    let motor_varies = ch("motor_speed").is_some_and(|c| {
+        c.is_animated()
+            && c.val().first().and_then(|v| json::num(Some(v))).is_some_and(|first| {
+                !c.val().iter().all(|v| json::num(Some(v)).is_some_and(|v| (v - first).abs() < 1e-9))
+            })
+    });
+    if json::boolean(get(ph, "enable_motor")).unwrap_or(false) || motor_varies {
+        b.report.skip("physics motors (the body does not spin)");
     }
     if ch("force_field_vector").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "force_field")).unwrap_or(false) {
         b.report.skip("physics force fields");
@@ -464,9 +668,6 @@ fn layer_transform(b: &mut Builder, layer: &Value) -> Affine {
         sy = -sy;
     }
     let (shx, shy, _) = ch("shear").and_then(|c| channel::sample_vec3(&c, frame)).unwrap_or((0.0, 0.0, 0.0));
-    if ch("following").is_some_and(|c| c.is_animated()) {
-        b.report.skip("follow progress animation");
-    }
     let origin = get(layer, "origin").and_then(|v| json::vec2(Some(v))).unwrap_or(anicraft_geom::Vec2::ZERO);
     let shear = Affine { m: [1.0, shy, shx, 1.0, 0.0, 0.0] };
     // Moho pivots layer rotation, shear and scale at the layer origin:

@@ -41,10 +41,20 @@ pub(crate) fn audio_layer(b: &mut Builder, layer: &Value, l: &mut Layer) {
             return;
         }
     };
-    let frames = sound.movie_frames(b.doc.stage.fps).min(b.duration).max(1);
+    // Moho's timing offset moves the layer's frame zero (the scripting API: "the number
+    // of frames between the layer's frame zero and timeline frame zero"): the corpus's
+    // audio bar — imported at 1-based frame 24, saved with timing_offset -23 — starts at
+    // 0-based frame 23. A positive offset would start the sound before the timeline:
+    // counted, the head untrimmed.
+    let timing = json::integer(get(layer, "timing_offset")).unwrap_or(0);
+    if timing > 0 {
+        b.report.skip("layer timing offsets before the timeline (the sound head is cut off)");
+    }
+    let start = (-timing).clamp(0, b.duration as i64 - 1).max(0) as u32;
+    let frames = sound.movie_frames(b.doc.stage.fps).min(b.duration.saturating_sub(start)).max(1);
     let id = sound.id;
     b.doc.sounds.push(Arc::new(sound));
-    let mut k = Keyframe::new(0, frames);
+    let mut k = Keyframe::new(start, frames);
     k.sound = Some(FrameSound { sound: id, sync: SoundSync::Stream, repeat: 1, looping: false, effect: Default::default() });
     l.keyframes = vec![Arc::new(k)];
 }

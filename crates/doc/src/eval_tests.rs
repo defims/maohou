@@ -12,6 +12,14 @@ fn shape_el(id: u64, x: f32) -> Element {
     }
 }
 
+/// A 100 px horizontal line from the origin, as a Follow Path target holds its curve.
+fn line_el(id: u64) -> Element {
+    let mut path = Path::default();
+    path.cmds.push(PathCmd::MoveTo(Vec2::ZERO));
+    path.cmds.push(PathCmd::LineTo(Vec2::new(100.0, 0.0)));
+    Element { id: ElementId(id), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Shape(Shape::filled(path, Paint::Solid(Rgba::BLACK))) }
+}
+
 fn layer0(d: &mut Document) -> &mut Layer {
     Arc::make_mut(&mut d.timeline_mut(0).layers[0])
 }
@@ -134,6 +142,92 @@ fn mask_layers_clip_the_layers_they_mask() {
     Arc::make_mut(&mut h.timeline_mut(0).layers[0]).visible = false;
     let dl = evaluate(&h, 0);
     assert!(dl.items.iter().all(|i| i.clip.is_none() && i.masks.is_none()) && dl.items.len() == 3);
+}
+
+#[test]
+fn a_followed_layer_rides_the_target_curve() {
+    // Moho's Follow Path (ADR 0109): the follower's placement gains the path point —
+    // and the tangent's angle when it rotates to follow — ahead of its own channels.
+    let mut d = Document::default();
+    // Both layers span the ridden range, so every probed frame evaluates.
+    let mut hold = Keyframe::new(0, 101);
+    hold.elements.push(Arc::new(line_el(10)));
+    let mut target = Layer::new(LayerId(1), "line");
+    target.keyframes = vec![Arc::new(hold)];
+    let mut hold2 = Keyframe::new(0, 101);
+    hold2.elements.push(Arc::new(shape_el(11, 0.0)));
+    let mut follower = Layer::new(LayerId(2), "rider");
+    follower.keyframes = vec![Arc::new(hold2)];
+    follower.follow = Some(FollowPath { target: LayerId(1), element: ElementId(10), subpath: 0, following: {
+        let mut ch = Channel::default();
+        ch.set_key(0, 0.0);
+        ch.set_key(100, 100.0);
+        ch
+    }, rotate: true, bending: false });
+    let tl = d.timeline_mut(0);
+    tl.layers.clear(); // drop the default layer: its id would shadow the target's
+    tl.layers.push(Arc::new(target));
+    tl.layers.push(Arc::new(follower));
+    let at = |f: u32| -> (f32, f32, [f32; 6]) {
+        let dl = evaluate(&d, f);
+        let t = dl.items.iter().find(|i| i.element == ElementId(11)).expect("the rider draws").transform;
+        (t.translation().x, t.translation().y, t.m)
+    };
+    // The rider sits at the path point its channel names, turned along the tangent.
+    let (x, y, _) = at(0);
+    assert!(x.abs() < 1e-3 && y.abs() < 1e-3, "({x}, {y})");
+    let (x, y, _) = at(50);
+    assert!((x - 50.0).abs() < 0.5 && y.abs() < 0.5, "({x}, {y})");
+    let (x, y, _) = at(100);
+    assert!((x - 100.0).abs() < 1e-3 && y.abs() < 1e-3, "({x}, {y})");
+    // Rotate to follow: on this straight path the tangent is 0°, so the matrix keeps its
+    // rotation identity.
+    let (_, _, m) = at(50);
+    assert!((m[0] - 1.0).abs() < 1e-3, "rotation matrix: {:?}", m);
+    // Past the ends the position clamps to the path.
+    let (x, _, _) = at(200);
+    assert!(x - 100.0 < 1e-3);
+    // A broken relation (target gone) leaves the layer where its own transform puts it.
+    let mut lone = Document::default();
+    let mut rider = Layer::new(LayerId(9), "lost");
+    rider.follow = Some(FollowPath { target: LayerId(1), element: ElementId(10), subpath: 0, following: Channel::default(), rotate: false, bending: false });
+    push(&mut rider, 0, shape_el(11, 7.0));
+    lone.timeline_mut(0).layers.push(Arc::new(rider));
+    let dl = evaluate(&lone, 0);
+    assert_eq!(dl.items.len(), 1);
+    assert!((dl.items[0].transform.translation().x - 7.0).abs() < 1e-3, "no target: the layer keeps its own transform");
+}
+
+#[test]
+fn a_drawn_mask_draws_beneath_the_layers_it_masks() {
+    // Moho's "+ Add to mask" (ADR 0108): the mask's fills also draw, beneath the layers
+    // they clip — an eye white shows and the pupil above it stays visible inside it.
+    let mut d = mask_doc();
+    Arc::make_mut(&mut d.timeline_mut(0).layers[0]).mask_draws = true;
+    let dl = evaluate(&d, 0);
+    assert_eq!(dl.clip_parents, vec![None], "the clip itself is unchanged");
+    let mask_items: Vec<usize> = dl.items.iter().enumerate().filter(|(_, i)| i.element == ElementId(11)).map(|(i, _)| i).collect();
+    assert_eq!(mask_items.len(), 2, "the mask's artwork is there twice: the drawn copy and the clip pass");
+    let drawn = mask_items[0];
+    assert_eq!(dl.items[drawn].masks, None, "one pass draws");
+    assert_eq!(dl.items[mask_items[1]].masks, Some(0), "one pass forms the clip");
+    // The drawn copy paints before both masked layers (12 and 13), which the walk painted
+    // before the mask itself.
+    assert!(drawn < dl.items.iter().position(|i| i.element == ElementId(12)).unwrap());
+    assert!(drawn < dl.items.iter().position(|i| i.element == ElementId(13)).unwrap());
+    // Without masked artwork the copy stays at the mask's own place in the paint order:
+    // above what the walk visited before it, below the plain layer that comes after.
+    let mut childless = mask_doc();
+    {
+        let tl = childless.timeline_mut(0);
+        Arc::make_mut(&mut tl.layers[0]).mask_draws = true;
+        Arc::make_mut(&mut tl.layers[1]).parent = None;
+        Arc::make_mut(&mut tl.layers[2]).parent = None;
+    }
+    let dl = evaluate(&childless, 0);
+    let drawn = dl.items.iter().position(|i| i.element == ElementId(11)).unwrap();
+    assert!(dl.items[..drawn].iter().any(|i| i.element == ElementId(14)), "the childless drawn mask paints at its own place, above the layers before it");
+    assert_eq!(dl.items.iter().filter(|i| i.element == ElementId(11)).count(), 2);
 }
 
 #[test]

@@ -192,10 +192,21 @@ fn follow_path_imports() {
     let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("follow-path.moho: {e}"));
     assert_eq!(layer_names(&doc), ["FollowLayer", "Layer 1"]);
     let els = &doc.timeline(0).layers[1].keyframes[0].elements;
-    assert_eq!(els.len(), 30, "13 fill + 17 stroke elements from 17 shapes");
-    assert_eq!(report.skipped.get("follow-path relations (positions are already baked)"), Some(&1), "{:?}", report.skipped);
-    assert!(report.skipped.contains_key("rotate to follow"));
-    assert!(report.skipped.contains_key("follow progress animation"));
+    assert_eq!(els.len(), 31, "13 fill + 17 stroke elements from 17 shapes, plus the followed curve");
+    // The Follow Path relation rides the document (ADR 0109): the empty FollowLayer follows
+    // Layer 1's S curve, rotating along it, its progress animated; bending alone is counted
+    // (no published algorithm, no bent specimen).
+    assert_eq!(report.skipped.get("follow bending (the artwork rides the path, it does not bend)"), Some(&1), "{:?}", report.skipped);
+    let follow = doc.timeline(0).layers[0].follow.as_ref().expect("the FollowLayer carries the relation");
+    assert_eq!(follow.target, doc.timeline(0).layers[1].id);
+    assert!(follow.rotate, "rotate to follow");
+    assert!(follow.bending, "bend with curve is kept (counted, not rendered)");
+    assert!((follow.following.sample_or(0.0, -1.0) - 1.0).abs() < 1e-6, "progress 1 at frame 0");
+    assert!((follow.following.sample_or(50.0, -1.0) - 0.0).abs() < 1e-6, "progress 0 at frame 50");
+    // The followed S curve (Moho mesh curve 17, no shape of its own) landed on the target
+    // as the relation's invisible geometry.
+    assert!(els.last().is_some_and(|el| el.id == follow.element
+        && matches!(&el.kind, anicraft_doc::ElementKind::Shape(s) if s.fill.is_none() && s.stroke.is_none())), "the followed curve is the invisible path");
 }
 
 #[test]
@@ -308,6 +319,31 @@ fn keyframes_layer_channels_match_moho_runtime_per_frame() {
     assert_eq!(checked, 31, "every probed frame compared");
 }
 
+/// keyframes-camera.moho carries the corpus's group-masking idiom (ADR 0108): the Eyes
+/// group hides its members (Moho `group_mask` 2) and the eye-white layer adds itself to
+/// the mask (`masking` 2 = MM_ADD_MASK: it draws itself and defines the region), with the
+/// pupil masked by it. The full render gate lives in the CLI's mask_render_gate.rs.
+#[test]
+fn group_mask_imports_as_a_drawing_mask() {
+    let Some(path) = fixture("keyframes-camera") else { return missing_corpus() };
+    let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("keyframes-camera.moho: {e}"));
+    assert!(!report.skipped.iter().any(|(k, _)| k.contains("mask")), "{:?}", report.skipped);
+    let tl = doc.timeline(0);
+    let mask = tl.layers.iter().find(|l| l.kind == anicraft_doc::LayerKind::Mask).expect("the eye white imports as the mask");
+    assert_eq!(mask.name, "Eyes");
+    assert!(mask.mask_draws, "Moho's add-to-mask member draws itself");
+    let pupil = tl.layers.iter().find(|l| l.name == "Pupil").expect("the pupil");
+    assert_eq!(pupil.parent, Some(mask.id), "the pupil is the mask's child");
+    // Every rig layer carries the smart-bone action membership table (ADR 0104): the
+    // poses themselves ride the skeleton's channels, which stage 5 imports.
+    let rig = tl.layers.iter().find(|l| l.name == "CharRig").expect("the rig");
+    assert_eq!(rig.smart_actions, vec![
+        anicraft_doc::SmartActionRef { name: "Eyes_LR".into(), pose: 0 },
+        anicraft_doc::SmartActionRef { name: "Eyes_UD".into(), pose: 0 },
+    ], "the membership table rides the layer");
+    assert!(tl.layers.iter().all(|l| l.smart_actions.len() == 2), "every rig layer belongs to both actions");
+}
+
 /// physics-drop.moho (Moho Pro 14.4, CASES #20): Moho's real physics configuration —
 /// the world on a BoneLayer (gravity direction channel 4.712389 rad = 270° down,
 /// strength 0 default) holding a filled Polygon body whose physics.enabled is on.
@@ -371,5 +407,9 @@ fn audio_track_fixture_becomes_a_keyframe_sound() {
     assert!(bounce.has_sounds());
     let snd = bounce.keyframes[0].sound.as_ref().unwrap();
     assert_eq!(snd.sync, anicraft_doc::SoundSync::Stream);
+    // Moho saved timing_offset -23 (the bar was imported at 1-based frame 24): the sound's
+    // keyframe starts at 0-based frame 23, exactly as Moho's sequencer shows it.
+    assert_eq!(bounce.keyframes[0].start, 23, "the audio bar starts where Moho placed it");
+    assert!(!report.skipped.iter().any(|(k, _)| k.contains("timing")), "the offset resolves: {:?}", report.skipped);
     assert!(!report.skipped.contains_key("missing audio files"), "{:?}", report.skipped);
 }
