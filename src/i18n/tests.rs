@@ -447,6 +447,9 @@ fn strings_in(v: &serde_json::Value, out: &mut BTreeSet<String>) {
 
 /// Names egui gives its own parts.
 const EGUI_OWN: [&str; 1] = ["Close window"];
+/// The product name never translates (docs/localisation.md); the platform layer names the
+/// unified title bar's app button with it, the way it names menus.
+const PRODUCT_NAME: [&str; 1] = ["AniCraft"];
 
 /// Names a screen reader would announce that are still plain English in the pseudo-locale,
 /// for the window after `setup` (a few frames to settle).
@@ -479,7 +482,7 @@ fn plain_names(what: &str, app: &crate::app::App, nodes: Vec<(egui::accesskit::N
         for name in [n.label(), n.description()].into_iter().flatten() {
             // egui names its own window close button; it offers no way to name it ourselves
             // (docs/localisation.md › Not yet).
-            let translated = name.chars().any(pseudo::is_accented) || EGUI_OWN.contains(&name);
+            let translated = name.chars().any(pseudo::is_accented) || EGUI_OWN.contains(&name) || PRODUCT_NAME.contains(&name);
             let ours = scan::is_prose(name) && !doc_text.contains(name) && !doc_text.iter().any(|d| name.contains(d.as_str()));
             if ours && !translated {
                 found.insert(format!("[{what}] {:?} {name:?}", n.role()));

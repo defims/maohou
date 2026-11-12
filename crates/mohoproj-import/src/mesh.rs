@@ -27,8 +27,8 @@ const MAX_SHAPES: usize = 20_000;
 const MAX_STOPS: usize = 64;
 
 /// One curve's point reference with its static handle parameters.
-struct CurveRef {
-    point: usize,
+pub(crate) struct CurveRef {
+    pub(crate) point: usize,
     smoothness: f32,
     weight_in: f32,
     weight_out: f32,
@@ -37,25 +37,25 @@ struct CurveRef {
 }
 
 /// One parsed curve: point references plus handle data, closed or open.
-struct Curve {
-    closed: bool,
-    pts: Vec<CurveRef>,
+pub(crate) struct Curve {
+    pub(crate) closed: bool,
+    pub(crate) pts: Vec<CurveRef>,
 }
 
 /// The mesh's static geometry, shared by all its shapes. `parents` mirrors `positions`:
 /// each point's bound bone (Moho's `Point.parent`, negative = unbound). The per-point
 /// channels are stage 5's point-level family (ADR 0105): a point whose position animates
 /// carries its (converted) channel, and width and colour ride along at the import frame.
-struct MeshData {
-    positions: Vec<Vec2>,
-    curves: Vec<Curve>,
-    parents: Vec<i64>,
+pub(crate) struct MeshData {
+    pub(crate) positions: Vec<Vec2>,
+    pub(crate) curves: Vec<Curve>,
+    pub(crate) parents: Vec<i64>,
     /// A point's position channel when it animates (keys in Moho inches, as the path is).
-    animated: Vec<Option<anicraft_doc::Channel<Vec2>>>,
+    pub(crate) animated: Vec<Option<anicraft_doc::Channel<Vec2>>>,
     /// A point's line width at the import frame as a factor of the shape's (`None` = 1).
-    widths: Vec<Option<f32>>,
+    pub(crate) widths: Vec<Option<f32>>,
     /// A point's colour, when the point is coloured.
-    colors: Vec<Option<Rgba>>,
+    pub(crate) colors: Vec<Option<Rgba>>,
 }
 
 /// Builds the shape elements of one mesh. `world` is the layer's own inch-space transform
@@ -74,7 +74,7 @@ pub(crate) fn mesh_elements(b: &mut Builder, mesh: &Value, world: Affine, out: &
 
 /// Reads points and curves. Broken entries drop their point or curve with a report line,
 /// never a panic.
-fn parse_mesh(b: &mut Builder, mesh: &Value) -> Option<MeshData> {
+pub(crate) fn parse_mesh(b: &mut Builder, mesh: &Value) -> Option<MeshData> {
     let points = array(get(mesh, "points"))?;
     if points.len() > MAX_POINTS {
         b.report.skip("meshes past 200,000 points");
@@ -228,7 +228,7 @@ fn shape_element(b: &mut Builder, mesh: &Value, shape: &Value, data: &MeshData, 
             name: String::new(),
             transform,
             color: fx,
-            kind: ElementKind::Shape(Shape { path: Arc::new(path.clone()), fill: Some(p), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: bind.clone(), points: tracks.clone(), trim: trim.clone().map(Box::new) }),
+            kind: ElementKind::Shape(Shape { path: Arc::new(path.clone()), fill: Some(p), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: bind.clone(), points: tracks.clone(), trim: trim.clone().map(Box::new), texture: None }),
         }));
     }
     if let Some(s) = stroke {
@@ -237,7 +237,7 @@ fn shape_element(b: &mut Builder, mesh: &Value, shape: &Value, data: &MeshData, 
             name: String::new(),
             transform,
             color: fx,
-            kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: Some(s), fill_rule: FillRule::NonZero, merge: false, bind, points: tracks, trim: trim.map(Box::new) }),
+            kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: None, stroke: Some(s), fill_rule: FillRule::NonZero, merge: false, bind, points: tracks, trim: trim.map(Box::new), texture: None }),
         }));
     }
 }

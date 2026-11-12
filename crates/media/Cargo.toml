@@ -1,0 +1,19 @@
+[package]
+name = "anicraft-media"
+description = "AniCraft L0: the built-in VP9/Opus encoders, WebM/MP4 muxers and zip/JPEG writers behind the export commands (no external encoder or ffmpeg)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+# Inflates what our deflate writes, in tests (the importers' zip readers are higher layers).
+miniz_oxide = "0.8"
+# Decodes what our JPEG encoder writes, in tests (already in the tree through the doc crate).
+zune-jpeg.workspace = true
+
+[lints]
+workspace = true

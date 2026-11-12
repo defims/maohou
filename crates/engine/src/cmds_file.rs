@@ -39,11 +39,20 @@ pub fn specs() -> Vec<CommandSpec> {
         },
         CommandSpec { id: "file.export_svg", label: "Export Frame as SVG…", menu: "File/Export", shortcut: None, params: "{path, frame? (in the current scene), confirm?}", mutates: false, run: export_svg },
         CommandSpec {
+            id: "file.export_moho",
+            label: "Export Moho Package…",
+            menu: "File/Export",
+            shortcut: None,
+            params: "{path (.moho, a zip package with a preview image; or .mohoproj, the bare project JSON), preview? (the frame the preview shows; default the playhead), scale?, confirm?}",
+            mutates: false,
+            run: export_moho,
+        },
+        CommandSpec {
             id: "file.export_video",
             label: "Export Video…",
             menu: "File/Export",
             shortcut: None,
-            params: "{path (.mp4 or .webm), from?, to? (movie frames), scale?, audio? (default true: the movie's sounds, Opus in WebM, AAC in MP4), ffmpeg? (path; else ANICRAFT_FFMPEG, else ffmpeg on the PATH), confirm?}",
+            params: "{path (.mp4 or .webm), from?, to? (movie frames), scale?, quality? (VP9 quality 1-100, default 60), audio? (default true: the movie's sounds as Opus in both containers), confirm?}",
             mutates: false,
             run: export_video,
         },
@@ -405,6 +414,7 @@ fn import_image(s: &mut Session, path: &std::path::Path, bytes: Vec<u8>) -> Resu
         bind: Vec::new(),
         points: Vec::new(),
         trim: None,
+        texture: None,
     };
     Ok(anicraft_svg::SvgImport::single(w, h, vec![anicraft_svg::ImportedElement { name, transform: anicraft_geom::Affine::IDENTITY, alpha: 1.0, kind: anicraft_doc::ElementKind::Shape(shape) }]))
 }
@@ -510,30 +520,78 @@ fn export_sprite_sheet(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"written": path.display().to_string(), "map": json_path.display().to_string(), "frames": n, "columns": cols, "rows": rows, "width": sheet_w, "height": sheet_h}))
 }
 
-/// The ffmpeg to run: `ffmpeg` param, else `ANICRAFT_FFMPEG`, else `ffmpeg` on the PATH.
-fn ffmpeg_program(p: &Value) -> Result<std::ffi::OsString> {
-    if let Some(x) = opt_str(p, "ffmpeg")?.filter(|x| !x.trim().is_empty()) {
-        return Ok(x.into());
-    }
-    Ok(std::env::var_os("ANICRAFT_FFMPEG").filter(|x| !x.is_empty()).unwrap_or_else(|| "ffmpeg".into()))
+/// Export Moho Package: the document as a Moho-openable `.moho` zip (`Project.mohoproj` beside
+/// a JPEG preview of the frame; ADR 0107), or a bare `.mohoproj` with the preview embedded as
+/// its `thumbnail`. An imported document exports its untouched source keys from the sidecar
+/// with the model's current state over them; a native one generates the canonical form.
+fn export_moho(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = PathBuf::from(str_req(p, "path")?);
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    let bare = match ext.as_deref() {
+        Some("moho") => false,
+        Some("mohoproj") => true,
+        _ => return Err(EngineError::Param("the Moho package goes to .moho (a zip) or .mohoproj (the bare JSON)".into())),
+    };
+    // The preview: the frame drawn small (Moho's own previews cap at 512 px).
+    let last = s.doc.frame_count().saturating_sub(1);
+    let frame = opt_u32(p, "preview")?.unwrap_or(s.frame).min(last);
+    let view = View::stage(&s.doc, scale_param(p)?);
+    let (pm, _stats) = render(&anicraft_doc::evaluate(&s.doc, frame), &view)?;
+    let (mut w, mut h) = (view.width, view.height);
+    let cap = 512.0f32;
+    let scale = (cap / w as f32).min(cap / h as f32).min(1.0);
+    let rgba = if scale < 1.0 {
+        w = ((w as f32 * scale).round() as u32).max(1);
+        h = ((h as f32 * scale).round() as u32).max(1);
+        image_scale(&pm.to_rgba8(), view.width, view.height, w, h)
+    } else {
+        pm.to_rgba8()
+    };
+    let preview = anicraft_media::jpeg::encode(&rgba, w, h, 85);
+    let (project, report) = anicraft_mohoproj_import::export::project_json(&s.doc);
+    let bytes = if bare {
+        let mut root = project;
+        if let Some(obj) = root.as_object_mut() {
+            obj.insert("thumbnail".into(), json!(anicraft_doc::base64_encode(&preview)));
+        }
+        serde_json::to_vec(&root).map_err(|e| EngineError::Format(e.to_string()))?
+    } else {
+        anicraft_mohoproj_import::export::package_bytes(&s.doc, Some(&preview)).map_err(|e| EngineError::State(e.to_string()))?
+    };
+    crate::vfs::write(&path, &bytes)?;
+    Ok(json!({"written": path.display().to_string(), "bytes": bytes.len(), "frame": frame, "preview": format!("{w}x{h}"), "report": report.summary(), "skipped": report.skipped}))
 }
 
-/// Export Video: movie frames streamed in order to the user's own ffmpeg (AniCraft bundles no
-/// video encoder; see docs/legal/compliance.md). `.webm` is VP9 (royalty-free); `.mp4` is H.264
-/// from whatever encoder that ffmpeg has. Frames render in parallel batches; odd sizes are
+/// Nearest-neighbour resample of an RGBA frame (the preview's small draw).
+fn image_scale(rgba: &[u8], from_w: u32, from_h: u32, to_w: u32, to_h: u32) -> Vec<u8> {
+    let mut out = vec![0u8; to_w as usize * to_h as usize * 4];
+    for y in 0..to_h {
+        let sy = (u64::from(y) * u64::from(from_h) / u64::from(to_h)) as usize;
+        for x in 0..to_w {
+            let sx = (u64::from(x) * u64::from(from_w) / u64::from(to_w)) as usize;
+            let src = (sy * from_w as usize + sx) * 4;
+            let dst = (y as usize * to_w as usize + x as usize) * 4;
+            out[dst..dst + 4].copy_from_slice(rgba.get(src..src + 4).unwrap_or(&[0; 4]));
+        }
+    }
+    out
+}
+
+/// Export Video: movie frames rendered in parallel batches and encoded by AniCraft's own VP9
+/// encoder with Opus sound (the `anicraft-media` crate), muxed into WebM or MP4 — both
+/// royalty-free, so no patent-pool codec is bundled (docs/legal/compliance.md). Odd sizes are
 /// padded to even, as 4:2:0 video needs.
 fn export_video(s: &mut Session, p: &Value) -> Result<Value> {
-    use std::io::Write;
     let path = PathBuf::from(str_req(p, "path")?);
     if crate::vfs::in_memory() {
-        // ffmpeg writes the file itself, and a web browser can't start it (ADR 0036).
-        return Err(EngineError::State("video export runs ffmpeg, which can't run in a web browser: export an animated GIF, a PNG sequence or an HTML page instead".into()));
+        // The movie is buffered whole and encoded on this thread, which a web page can't spare
+        // (ADR 0036).
+        return Err(EngineError::State("video export needs the desktop app: in a browser export an animated GIF, a PNG sequence or an HTML page instead".into()));
     }
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-    // Sound is encoded by the same ffmpeg: Opus in WebM (royalty-free), AAC in MP4.
-    let (codec, audio_codec): (&[&str], &[&str]) = match ext.as_deref() {
-        Some("webm") => (&["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "30", "-row-mt", "1"], &["-c:a", "libopus", "-b:a", "160k"]),
-        Some("mp4" | "m4v" | "mov") => (&["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-movflags", "+faststart"], &["-c:a", "aac", "-b:a", "192k"]),
+    let mp4 = match ext.as_deref() {
+        Some("webm") => false,
+        Some("mp4" | "m4v") => true,
         _ => return Err(EngineError::Param("video goes to .mp4 or .webm".into())),
     };
     let last = s.doc.frame_count().saturating_sub(1);
@@ -543,83 +601,98 @@ fn export_video(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Param("'to' must not be before 'from'".into()));
     }
     let view = View::stage(&s.doc, scale_param(p)?);
-    let (w, h, fps) = (view.width, view.height, s.doc.stage.fps);
-    let program = ffmpeg_program(p)?;
-    let size = format!("{w}x{h}");
-    let rate = format!("{fps}");
-    // The soundtrack (when the movie has sounds) goes to ffmpeg as a WAV beside the frames.
-    let track = if opt_bool(p, "audio")?.unwrap_or(true) && anicraft_doc::sound::has_sounds(&s.doc) { Some(crate::cmds_sound::temp_track(s, from, to)?) } else { None };
-    let mut args: Vec<&std::ffi::OsStr> = Vec::new();
-    for a in ["-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", &size, "-r", &rate, "-i", "-"] {
-        args.push(a.as_ref());
-    }
-    match &track {
-        Some(t) => {
-            args.extend(["-i".as_ref(), t.0.as_os_str()]);
-            args.extend(["-map", "0:v", "-map", "1:a"].map(std::ffi::OsStr::new));
-        }
-        None => args.push("-an".as_ref()),
-    }
-    for a in ["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p"] {
-        args.push(a.as_ref());
-    }
-    args.extend(codec.iter().map(std::ffi::OsStr::new));
-    if track.is_some() {
-        args.extend(audio_codec.iter().map(std::ffi::OsStr::new));
-    }
-    args.push(path.as_os_str());
-    let mut child = std::process::Command::new(&program)
-        .args(&args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            EngineError::State(format!(
-                "AniCraft makes video with ffmpeg, which could not be started ({e}). Install it from ffmpeg.org, or point ANICRAFT_FFMPEG at it."
-            ))
-        })?;
-    // Read ffmpeg's messages as they come, so a full pipe never stalls it.
-    let mut err_pipe = child.stderr.take();
-    let messages = std::thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(e) = err_pipe.as_mut() {
-            let _ = std::io::Read::read_to_string(e, &mut text);
-        }
-        text
-    });
-    let doc = &s.doc;
-    let mut written = 0u32;
+    let fps = f64::from(s.doc.stage.fps);
+    let quality = opt_u32(p, "quality")?.unwrap_or(60).clamp(1, 100) as u8;
+    let with_audio = opt_bool(p, "audio")?.unwrap_or(true) && anicraft_doc::sound::has_sounds(&s.doc);
+    // Even dimensions: 4:2:0 chroma works in whole sample pairs, like ffmpeg's pad did.
+    let (w, h) = (view.width + u32::from(!view.width.is_multiple_of(2)), view.height + u32::from(!view.height.is_multiple_of(2)));
+    let opts = anicraft_media::MovieOptions { width: w, height: h, fps, quality, keyframe_interval: (fps * 2.0).round().max(1.0) as u32, audio_bitrate: 160_000, audio_rate: 48_000 };
+    let mut movie = if mp4 { Movie::Mp4(anicraft_media::mp4::Mp4::new(opts)) } else { Movie::Webm(anicraft_media::webm::Webm::new(opts)) };
+    // The soundtrack, as heard playing frames from..=to, mixed block by block while the frames
+    // go out (48 kHz stereo; Opus resamples on the way in when the movie's rate differs).
+    let (voices, span_a, span_b) = if with_audio {
+        let (v, a, b) = crate::cmds_sound::soundtrack(s, from, to, 48_000);
+        (Some(v), a, b)
+    } else {
+        (None, 0, 0)
+    };
+    let total_samples = span_b.saturating_sub(span_a);
+    let total_frames = u64::from(to - from + 1);
+    let mut fed = 0u64;
     let mut failure: Option<EngineError> = None;
-    if let Some(mut stdin) = child.stdin.take() {
-        let frames: Vec<u32> = (from..=to).collect();
-        'batches: for batch in frames.chunks(8) {
-            let images: Vec<Vec<u8>> = match batch.par_iter().map(|&f| render(&anicraft_doc::evaluate(doc, f), &view).map(|(pm, _)| pm.to_rgba8())).collect::<std::result::Result<_, _>>() {
-                Ok(v) => v,
-                Err(e) => {
-                    failure = Some(e.into());
-                    break;
-                }
-            };
-            for img in images {
-                if stdin.write_all(&img).is_err() {
-                    break 'batches; // ffmpeg stopped reading: its message says why
-                }
-                written += 1;
+    let doc = &s.doc;
+    for batch in (from..=to).collect::<Vec<u32>>().chunks(8) {
+        let images: Vec<Vec<u8>> = match batch.par_iter().map(|&f| render(&anicraft_doc::evaluate(doc, f), &view).map(|(pm, _)| pm.to_rgba8())).collect::<std::result::Result<_, _>>() {
+            Ok(v) => v,
+            Err(e) => {
+                failure = Some(e.into());
+                break;
+            }
+        };
+        for img in &images {
+            movie.write_frame(&padded_even(img, view.width, view.height, w, h));
+        }
+        if let Some(voices) = &voices {
+            // Sound heard up to this batch's last frame (proportional: frames are even slices
+            // of the soundtrack's sample span).
+            let end = batch.last().copied().unwrap_or(from);
+            let want = (u64::from(end - from + 1) * total_samples / total_frames.max(1)) as usize;
+            let n = want.saturating_sub(fed as usize);
+            if n > 0 {
+                let mut buf = vec![0f32; n * 2];
+                anicraft_doc::audio::mix(voices, 48_000, anicraft_doc::audio::MixOptions::default(), span_a + fed, &mut buf);
+                movie.write_audio(&buf);
+                fed += n as u64;
             }
         }
     }
-    let status = child.wait()?;
-    let log = messages.join().unwrap_or_default();
     if let Some(e) = failure {
         return Err(e);
     }
-    if !status.success() || written != to - from + 1 {
-        let tail: Vec<&str> = log.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
-        return Err(EngineError::Format(format!("ffmpeg could not make the video ({status}): {}", if tail.is_empty() { "no message".to_string() } else { tail.join(" | ") })));
+    let bytes = movie.finish();
+    crate::vfs::write(&path, &bytes)?;
+    Ok(json!({"written": path.display().to_string(), "frames": to - from + 1, "bytes": bytes.len(), "width": w, "height": h, "fps": fps, "audio": with_audio, "encoder": "vp9"}))
+}
+
+/// A frame drawn at `from_w × from_h`, padded with black to the even `to_w × to_h`.
+fn padded_even(rgba: &[u8], from_w: u32, from_h: u32, to_w: u32, to_h: u32) -> Vec<u8> {
+    if from_w == to_w && from_h == to_h {
+        return rgba.to_vec();
     }
-    let bytes = crate::vfs::len(&path).unwrap_or(0);
-    Ok(json!({"written": path.display().to_string(), "frames": written, "bytes": bytes, "width": w, "height": h, "fps": fps, "audio": track.is_some()}))
+    let mut out = vec![0u8; to_w as usize * to_h as usize * 4];
+    for row in 0..from_h as usize {
+        let src = row * from_w as usize * 4;
+        let dst = row * to_w as usize * 4;
+        out[dst..dst + from_w as usize * 4].copy_from_slice(&rgba[src..src + from_w as usize * 4]);
+    }
+    out
+}
+
+/// The two movie containers' common face, so the export loop is written once.
+enum Movie {
+    Webm(anicraft_media::webm::Webm),
+    Mp4(anicraft_media::mp4::Mp4),
+}
+
+impl Movie {
+    fn write_frame(&mut self, rgba: &[u8]) {
+        match self {
+            Movie::Webm(m) => m.write_frame(rgba),
+            Movie::Mp4(m) => m.write_frame(rgba),
+        }
+    }
+    fn write_audio(&mut self, pcm: &[f32]) {
+        match self {
+            Movie::Webm(m) => m.write_audio(pcm),
+            Movie::Mp4(m) => m.write_audio(pcm),
+        }
+    }
+    fn finish(self) -> Vec<u8> {
+        match self {
+            Movie::Webm(m) => m.finish(),
+            Movie::Mp4(m) => m.finish(),
+        }
+    }
 }
 
 fn export_sequence(s: &mut Session, p: &Value) -> Result<Value> {

@@ -36,12 +36,13 @@ pub const ENGLISH: &str = "en";
 /// Accented, longer English (`pseudo.rs`), for checking layout and missed strings.
 pub const PSEUDO: &str = "pseudo";
 
-/// Languages the interface can be drawn in today: written left to right, in scripts the bundled
-/// faces cover and egui lays out a letter at a time (Latin, Greek, Cyrillic). A catalog for any
-/// other locale is embedded but not offered (docs/localisation.md › Scripts and direction).
-/// A regional variant (`es-mx`) is ready when its language is.
+/// Languages the interface can be drawn in today. Latin, Greek and Cyrillic ride the bundled
+/// faces; Chinese (`zh-cn`) rides the system's CJK face, which the theme installs as a
+/// fallback when the language needs it. A catalog for any other locale is embedded but not
+/// offered (docs/localisation.md › Scripts and direction). A regional variant (`es-mx`) is
+/// ready when its language is.
 pub const READY: &[&str] = &[
-    "az", "bg", "bs", "ca", "cs", "da", "de", "el", "es", "et", "fi", "fr", "gl", "hr", "hu", "id", "it", "kk", "lt", "lv", "nb", "nl", "pl", "pt", "pt-br", "ro", "ru", "sk", "sl", "sq", "sr", "sr-latn", "sv", "tr", "uk",
+    "az", "bg", "bs", "ca", "cs", "da", "de", "el", "es", "et", "fi", "fr", "gl", "hr", "hu", "id", "it", "kk", "lt", "lv", "nb", "nl", "pl", "pt", "pt-br", "ro", "ru", "sk", "sl", "sq", "sr", "sr-latn", "sv", "tr", "uk", "zh-cn",
 ];
 
 enum Kind {
@@ -147,6 +148,10 @@ impl Languages {
         if lang == "zh" {
             let traditional = tags.iter().any(|t| matches!(*t, "hant" | "tw" | "hk" | "mo"));
             candidates.push(if traditional { "zh-hant".into() } else { "zh-hans".into() });
+            if !traditional {
+                // The Simplified catalog ships as `zh-cn`.
+                candidates.push("zh-cn".into());
+            }
         }
         candidates.push(lang.to_string());
         // The pseudo-locale is never the system's.
@@ -232,6 +237,12 @@ pub fn set_language(pref: &str) -> &'static str {
 /// The interface language's code (`en`, `de`, `pseudo`).
 pub fn code() -> &'static str {
     LANGUAGES.get(current()).code.as_str()
+}
+
+/// Whether the interface language needs hanzi coverage the bundled Latin typefaces lack
+/// (Chinese today; the theme installs the system's CJK face as a fallback when this says so).
+pub fn wants_cjk() -> bool {
+    code().starts_with("zh")
 }
 
 /// Whether a `--lang` / preference value names a language this build has (or is [`AUTO`]).

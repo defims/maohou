@@ -4,6 +4,47 @@
 
 ## Unreleased
 
+* **Built-in encoders and the Chinese interface; the Moho package export** (ADR 0107, stage
+  7). Video export no longer needs ffmpeg: `file.export_video` encodes VP9 video and Opus
+  sound itself — the encoders come from the family's EffectCraft code base (clean-room from
+  the VP9 bitstream spec, RFC 6716 and RFC 7845) into the new `anicraft-media` crate (L0),
+  next to our own WebM and MP4 muxers (EBML/Matroska and ISO-BMFF with the public VP9 and
+  Opus bindings), a deflate/zip writer and a baseline JPEG encoder. `.webm` and `.mp4` (VP9
+  in MP4, no patent-pool codec bundled) both come off one render path: frames in parallel
+  batches, the soundtrack mixed in blocks into the encoder. The interface speaks Chinese:
+  a vendored `locales/zh-CN/anicraft.tsv` covers every string (written clean-room from the
+  plain English), Chinese joins Preferences › Language, a Chinese system locale resolves to
+  it, and the theme installs the system's CJK face (Hiragino Sans GB, Microsoft YaHei, Noto
+  Sans CJK) as a fallback while the language needs it — read from the OS, never bundled.
+  `file.export_moho` writes Moho packages: a `.moho` zip (`Project.mohoproj` beside a ≤512 px
+  JPEG preview) or a bare `.mohoproj` with the preview as its thumbnail. An imported
+  document exports its sidecar raw with the model's state over it (the original mesh and
+  unknown keys ride through); a native document generates the canonical form and shapes
+  become Moho inches. Nine corpus fixtures re-import from their export unchanged; whether
+  Moho 14.4 opens the package stays an owner-side real-machine check. Decision points
+  closed: D4 — no Moho Lua compatibility layer (the command registry, MCP and the plug-in
+  host are the automation surface); D5 — the 3D family stays out of the 1:1 scope, fields
+  ride the sidecar.
+
+* **Image warp, audio layers and physics** (ADR 0106). Moho image layers deform: a layer
+  with a mesh splits its shapes' outlines into triangles, each triangle carries the picture
+  (a bitmap fill) with the image coordinates pinned to its corners, and evaluation refits
+  the fill's matrix from the deformed points every frame — the texture follows the warp
+  with no renderer changes, on the CPU oracle and the GPU stage alike. Undeformed images
+  draw at the layer's own width/height and PSD translation (the corpus's PSD projects
+  finally land in place). Deformer switches, cropped images and movie layers are counted.
+  Audio layers import on the upstream sound model (ADR 0020/0039): the file decodes into
+  the library and plays as a Stream sound on the layer's keyframe; the document soundtrack
+  lands in the library with a note. Physics bakes: a Moho physics-enabled group's gravity
+  and wind become the scene's world, its body layers (static, friction, restitution, start
+  velocity) simulate once through `physics.bake` — a self-built integrator; bodies fall,
+  land and bounce on static layers — and the motion keys into each body's translation,
+  Moho's own `use_baked_physics` idea; Moho's already-baked `physics_nudge` channel merges
+  into the translation on import. Motors, force fields, density ratios and body-vs-body
+  collisions are counted, not simulated. `.anicraft` files are format v9 (v1–v8 open
+  unchanged). Real-machine fixtures (a warped image, an audio layer, the drop sample) are
+  the pending half of the stage gate.
+
 * **Switch layers, point-level animation and text strokes** (ADR 0105). Moho switch layers
   import as switches: the `switch_keys` selector rides the layer as a stepping string
   channel, the variants stay ordinary child layers, and evaluation shows exactly the branch

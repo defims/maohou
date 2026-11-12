@@ -145,6 +145,46 @@ pub fn settings_place() -> String {
     config_dir().map_or_else(|| tr!("memory only").to_string(), |d| d.display().to_string())
 }
 
+/// The system's CJK-capable sans face, for interface text in Chinese (the bundled Latin
+/// typefaces don't cover hanzi). Read at runtime from the OS install and never bundled, like
+/// the user fonts of Preferences (so its licence never binds the distribution): the first
+/// well-known path that exists wins, smallest first. A web page has no file system; the
+/// browser's fonts cover it.
+pub fn cjk_fallback_font() -> Option<(String, Vec<u8>, u32)> {
+    let home = |sub: &[&str]| std::env::var_os("HOME").map(|h| sub.iter().fold(PathBuf::from(h), |p, s| p.join(s)));
+    let candidates: Vec<(PathBuf, u32)> = match OS {
+        Os::Mac => [
+            ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), // i18n-exempt: a system font file path
+            ("/System/Library/Fonts/STHeiti Medium.ttc", 0), // i18n-exempt: a system font file path
+            ("/System/Library/Fonts/PingFang.ttc", 0), // i18n-exempt: a system font file path
+        ]
+        .iter()
+        .map(|(p, i)| (PathBuf::from(p), *i))
+        .collect(),
+        Os::Windows => {
+            let windir = std::env::var_os("WINDIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\Windows"));
+            [("Fonts\\msyh.ttc", 0), ("Fonts\\msyh.ttf", 0), ("Fonts\\simhei.ttf", 0)].iter().map(|(p, i)| (windir.join(p), *i)).collect()
+        }
+        Os::Linux | Os::Other => [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        ]
+        .iter()
+        .map(|p| (PathBuf::from(*p), 0))
+        .chain(home(&[".fonts", "NotoSansCJK-Regular.ttc"]).into_iter().map(|p| (p, 0)))
+        .collect(),
+        Os::Web => Vec::new(),
+    };
+    for (path, index) in candidates {
+        if let Ok(bytes) = std::fs::read(&path) {
+            return Some((path.file_stem()?.to_string_lossy().into_owned(), bytes, index));
+        }
+    }
+    None
+}
+
 /// The saved preferences (JSON): `prefs.json` in the settings folder, or browser storage.
 pub fn load_settings() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
@@ -167,14 +207,14 @@ pub fn save_settings(json: &str) -> Result<(), String> {
     }
 }
 
-/// Why this build can't run `cmd`, if it can't: a web page can't start ffmpeg or keep files in
+/// Why this build can't run `cmd`, if it can't: a web page can't spare the video encode or keep files in
 /// a folder of the computer (ADR 0036). The desktop app runs everything.
 pub fn unavailable(cmd: &str) -> Option<&'static str> {
     if !WEB {
         return None;
     }
     match cmd {
-        "file.export_video" => Some(tr_noop!("Video export runs ffmpeg, which a web browser can't start: use the desktop app, or export an animated GIF or a PNG sequence")),
+        "file.export_video" => Some(tr_noop!("Video export needs the desktop app: in a browser export an animated GIF, a PNG sequence or an HTML page")),
         "plugin.install" | "plugin.remove" | "plugin.reload" => Some(tr_noop!("Plug-ins are installed into a folder on your computer: use the desktop app")),
         _ => None,
     }

@@ -383,7 +383,8 @@ pub type UserFont = (String, Vec<u8>, u32);
 
 /// Installs the UI typefaces (ADR 0005). Order in each family: the user's system font (from
 /// Preferences), then the craft-fonts pair (when embedded at build time), then egui's bundled
-/// fonts, which stay as fallbacks for glyph coverage.
+/// fonts, then — when the interface language needs hanzi — the system's CJK face, which the
+/// bundled Latin typefaces don't cover.
 pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font: Option<&UserFont>) {
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
@@ -401,6 +402,16 @@ pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font:
             data.index = *index;
             defs.font_data.insert(key.clone(), Arc::new(data));
             defs.families.entry(family).or_default().insert(0, key);
+        }
+    }
+    if crate::i18n::wants_cjk()
+        && let Some((_name, bytes, index)) = crate::platform::cjk_fallback_font()
+    {
+        let mut data = FontData::from_owned(bytes);
+        data.index = index;
+        defs.font_data.insert("system-cjk".to_owned(), Arc::new(data));
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            defs.families.entry(family).or_default().push("system-cjk".to_owned());
         }
     }
     ctx.set_fonts(defs);

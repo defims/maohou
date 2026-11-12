@@ -1,4 +1,5 @@
-//! Moho document → AniCraft document (`.mohoproj` bare JSON, `.moho` zip package).
+//! Moho document → AniCraft document and back (`.mohoproj` bare JSON, `.moho` zip package):
+//! the import in `import.rs` and friends, the export in `export.rs` (stage 7).
 //!
 //! What maps (stage 1 of the Moho parity plan): stage size, frame rate and background; the
 //! inline layer tree flattened to AniCraft's list with parent links (Moho stores layers
@@ -21,8 +22,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod anim;
+pub mod audio;
 pub mod bone;
 pub mod channel;
+pub mod export;
+pub mod image;
 pub mod import;
 pub mod json;
 pub mod layer;
@@ -33,6 +37,8 @@ pub mod zip;
 pub use import::{import_path, import_with, import_with_fonts, Reader, Report, PROJECT_ENTRY};
 pub use zip::ZipError;
 
+#[cfg(test)]
+mod export_tests;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]

@@ -19,10 +19,10 @@ use crate::anim;
 use crate::channel::{self, Channel};
 use crate::import::{Builder, MOHO_DPI};
 use crate::json::{self, array, get};
-use crate::mesh;
+use crate::{audio, image, mesh};
 use crate::text;
-use anicraft_doc::{ColorEffect, Element, ElementId, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind, Paint, Shape};
-use anicraft_geom::{Affine, FillRule, Path};
+use anicraft_doc::{Element, ElementKind, Filter, Keyframe, Layer, LayerId, LayerKind};
+use anicraft_geom::Affine;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -79,6 +79,11 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
     // carries them in Moho.
     l.opacity = layer_opacity(b, layer);
     l.filters = layer_filters(b, layer);
+    // The layer as a physics body (ADR 0106): Moho's `physics.enabled` decides; the keys
+    // the model doesn't hold are counted and ride the sidecar. A physics-enabled group
+    // also collects the scene's world.
+    collect_world(b, layer);
+    l.physics = read_physics_body(b, layer);
     // The layer's transform: animated channels on a leaf layer (stage 2), channels on a
     // container (stage 3's group semantics), or the static bake into the drawn elements.
     let channels = anim::layer_transform_channels(get(layer, "transforms").unwrap_or(&Value::Null), &mut b.report);
@@ -151,7 +156,11 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
         "NoteLayer" => b.report.skip("note layers"),
         "ParticleLayer" => b.report.skip("particle layers"),
         "PatchLayer" => b.report.skip("patch layers"),
-        "AudioLayer" => b.report.skip("audio layers"),
+        "AudioLayer" => {
+            count_layer_extras(b, layer);
+            audio::audio_layer(b, layer, &mut l);
+            out.push(FlatLayer { layer: l });
+        }
         "" => b.report.skip("layers without a type"),
         other => b.report.skip(&format!("layers of unknown type ({other})")),
     }
@@ -257,6 +266,92 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     }
     if json::boolean(get(layer, "face_camera")).unwrap_or(false) {
         b.report.skip("3D face-camera layers");
+    }
+}
+
+/// The layer's physics body (Moho's `physics.*`; ADR 0106): enabled layers carry the
+/// editable core — static, friction, restitution, velocity (inches/s, converted). Density
+/// ratios, respawning, sleeping, pivots, motors and force fields have no slot in the first
+/// slice and are counted when they carry values; the group's world (its `enable_physics`,
+/// `gravity`, `wind`) collects on the builder.
+fn read_physics_body(b: &mut Builder, layer: &Value) -> Option<anicraft_doc::PhysicsBody> {
+    let ph = get(layer, "physics")?;
+    let frame = b.frame;
+    let on = json::boolean(get(ph, "enabled")).unwrap_or(false);
+    if !on {
+        return None;
+    }
+    let ch = |k: &str| get(ph, k).and_then(Channel::parse);
+    if ch("motor_speed").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "enable_motor")).unwrap_or(false) {
+        b.report.skip("physics motors");
+    }
+    if ch("force_field_vector").is_some_and(|c| c.is_animated()) || json::boolean(get(ph, "force_field")).unwrap_or(false) {
+        b.report.skip("physics force fields");
+    }
+    if json::boolean(get(ph, "sleeping")).unwrap_or(false) || json::integer(get(ph, "respawn")).is_some_and(|r| r != 0) || json::boolean(get(ph, "pivot")).unwrap_or(false) {
+        b.report.skip("physics body options (sleep, respawn, pivot)");
+    }
+    // Moho stores density/friction/restitution as plain numbers (fresh-minimal evidence);
+    // a channelled form reads too.
+    let num = |k: &str, d: f64| json::num(get(ph, k)).or_else(|| ch(k).and_then(|c| channel::sample_f64(&c, frame))).unwrap_or(d);
+    if (num("density", 1.0) - 1.0).abs() > 1e-6 {
+        b.report.skip("physics density ratios (bodies weigh the same)");
+    }
+    let velocity = get(ph, "velocity").and_then(|v| json::vec2(Some(v))).unwrap_or(anicraft_geom::Vec2::ZERO);
+    Some(anicraft_doc::PhysicsBody {
+        static_body: json::boolean(get(ph, "static")).unwrap_or(false),
+        friction: num("friction", 0.3).clamp(0.0, 1.0) as f32,
+        restitution: num("restitution", 0.5).clamp(0.0, 1.0) as f32,
+        velocity: anicraft_geom::Vec2::new(velocity.x * b.dpi, -velocity.y * b.dpi),
+    })
+}
+
+/// The enclosing physics-enabled group's world (Moho's GroupLayer `enable_physics` with its
+/// `gravity`/`wind`, inches/s² y-up): the first one becomes the scene's world, later ones
+/// are counted. Gravity's default in the corpus is (0, −10) — down, stage pixels +y.
+fn collect_world(b: &mut Builder, layer: &Value) {
+    let frame = b.frame;
+    // Two real-world forms (ADR 0106):
+    // • the GroupLayer form — `enable_physics` ⟨ch:Bool⟩ with plain `gravity`/`wind`
+    //   {x,y} inches/s² (Moho writes these on every group; most are template defaults);
+    // • the BoneLayer form — Moho's own working rigs (the Boar startup file) carry the
+    //   world on the bone layer: `gravity` = {direction: ⟨ch:Val⟩ radians (270° = down),
+    //   strength: ⟨ch:Val⟩} (the format spec's `gravity {x,y}` guess corrected).
+    let ty = json::string(get(layer, "type")).unwrap_or_default();
+    let world = match ty.as_str() {
+        "GroupLayer" => {
+            let on = get(layer, "enable_physics").and_then(Channel::parse).is_some_and(|c| channel::sample_bool(&c, frame).unwrap_or(false));
+            if !on {
+                return;
+            }
+            let conv = |v: Option<anicraft_geom::Vec2>| -> Option<anicraft_geom::Vec2> {
+                v.map(|g| anicraft_geom::Vec2::new(g.x * b.dpi, -g.y * b.dpi))
+            };
+            let gravity = conv(get(layer, "gravity").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::new(0.0, 10.0 * b.dpi));
+            let wind = conv(get(layer, "wind").and_then(|v| json::vec2(Some(v)))).unwrap_or(anicraft_geom::Vec2::ZERO);
+            Some(anicraft_doc::PhysicsWorld { gravity, wind })
+        }
+        "BoneLayer" => {
+            // Direction in radians (y up): a layer-space vector, converted like every
+            // inch-space direction — ×dpi, y-flipped.
+            let Some(g) = get(layer, "gravity") else { return };
+            let Some(dir) = get(g, "direction").and_then(Channel::parse).and_then(|c| channel::sample_f64(&c, frame)) else {
+                return;
+            };
+            let Some(strength) = get(g, "strength").and_then(Channel::parse).and_then(|c| channel::sample_f64(&c, frame)) else {
+                return;
+            };
+            let (sin, cos) = (dir as f32).sin_cos();
+            let gravity = anicraft_geom::Vec2::new(cos * strength as f32 * b.dpi, -sin * strength as f32 * b.dpi);
+            Some(anicraft_doc::PhysicsWorld { gravity, wind: anicraft_geom::Vec2::ZERO })
+        }
+        _ => return,
+    };
+    let Some(world) = world else { return };
+    let world = world.sanitized();
+    match &b.world {
+        Some(_) => b.report.skip("physics worlds past the first (the first one simulates)"),
+        None => b.world = Some(world),
     }
 }
 
@@ -372,9 +467,6 @@ fn layer_transform(b: &mut Builder, layer: &Value) -> Affine {
     if ch("following").is_some_and(|c| c.is_animated()) {
         b.report.skip("follow progress animation");
     }
-    if ch("physics_nudge").is_some_and(|c| c.is_animated()) {
-        b.report.skip("physics nudge animation (drawn without it)");
-    }
     let origin = get(layer, "origin").and_then(|v| json::vec2(Some(v))).unwrap_or(anicraft_geom::Vec2::ZERO);
     let shear = Affine { m: [1.0, shy, shx, 1.0, 0.0, 0.0] };
     // Moho pivots layer rotation, shear and scale at the layer origin:
@@ -396,7 +488,7 @@ fn finish_leaf(b: &mut Builder, mut l: Layer, world: Affine, content: Content, b
     let mut els: Vec<Arc<Element>> = Vec::new();
     match content {
         Content::Mesh(m) => mesh::mesh_elements(b, m, world, &mut els),
-        Content::Image(src) => image_elements(b, src, world, &mut els),
+        Content::Image(src) => image::image_elements(b, src, world, &mut els),
         Content::Text(src) => text::text_elements(b, src, world, &mut els),
     }
     if let Some(bone) = bind {
@@ -418,44 +510,6 @@ fn parent_bone(layer: &Value) -> Option<anicraft_doc::BoneId> {
         .filter(|i| *i >= 0)
         .and_then(|i| u32::try_from(i).ok())
         .map(anicraft_doc::BoneId)
-}
-
-/// An image layer: its file (found in the package or beside the document) becomes a bitmap
-/// rectangle of the image's natural size, anchored at the layer origin.
-fn image_elements(b: &mut Builder, layer: &Value, world: Affine, out: &mut Vec<Arc<Element>>) {
-    let Some(file) = fileref(layer) else {
-        b.report.skip("image layers without a file reference");
-        return;
-    };
-    let bytes = match (b.read)(&file) {
-        Ok(Some(bytes)) => bytes,
-        Ok(None) => {
-            b.report.skip("missing image files");
-            return;
-        }
-        Err(e) => {
-            b.report.notes.push(format!("image file unreadable: {e}"));
-            return;
-        }
-    };
-    let short: String = file.rsplit(['/', '\\']).next().unwrap_or(&file).chars().take(256).collect();
-    let Some(id) = b.register_bitmap(short, bytes) else {
-        b.report.skip("image files that are not PNG or JPEG");
-        return;
-    };
-    // Moho shows an image one-to-one at its natural pixel size: inches = pixels / dpi.
-    let (bw, bh) = b.doc.bitmap(id).map(|m| (m.width, m.height)).unwrap_or((0, 0));
-    let w = bw as f32 / b.dpi;
-    let h = bh as f32 / b.dpi;
-    let path = Path::rect(-w * 0.5, -h * 0.5, w, h);
-    let paint = Paint::Bitmap { bitmap: id, repeat: false, matrix: Affine::IDENTITY };
-    out.push(Arc::new(Element {
-        id: ElementId(b.doc.alloc_id()),
-        name: String::new(),
-        transform: b.to_px.mul(&world),
-        color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(path), fill: Some(paint), stroke: None, fill_rule: FillRule::NonZero, merge: false, bind: Vec::new(), points: Vec::new(), trim: None }),
-    }));
 }
 
 /// An image (or texture) file reference: `{path, relativeTo}`. Moho 14 names the image

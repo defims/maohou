@@ -524,13 +524,84 @@ fn moho_imports_round_trip_through_the_native_format() {
         eprintln!("skipped: no maop-corpus at MAOHOU_FIXTURES or ../../maop-corpus");
         return;
     }
-    for name in ["empty", "keyframes", "text", "switch"] {
+    for name in ["empty", "keyframes", "text", "switch", "physics-drop", "image-warp", "audio-track"] {
         let path = dir.join(format!("{name}.moho"));
         let (doc, _) = anicraft_mohoproj_import::import_path(&path).unwrap_or_else(|e| panic!("{name}.moho: {e}"));
         let back = format::from_json(&format::to_json(&doc).unwrap()).unwrap_or_else(|e| panic!("{name}.moho round trip: {e}"));
         assert_eq!(doc, back, "{name}.moho through save/load");
         assert!(back.maop_maohou.is_some(), "{name}: the sidecar survives");
     }
+}
+
+/// The stage-6 model round-trips whole (ADR 0106): a texture-pinned shape, a physics body
+/// and world, and a keyframe sound come back structurally equal through save/load.
+#[test]
+fn media_and_simulation_round_trip_through_the_native_format() {
+    use anicraft_doc::{Bitmap, BitmapId, Element, ElementId, ElementKind, FrameSound, PhysicsBody, PhysicsWorld, PointTrack, Shape, Sound, SoundId, SoundSync, TextureMap};
+    let mut png = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png, 2, 1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().unwrap();
+        wr.write_image_data(&[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    }
+    let mut d = sample::demo();
+    let bmp_id = d.alloc_id();
+    d.bitmaps.push(Arc::new(Bitmap::from_png(BitmapId(bmp_id), "tex", png).unwrap()));
+    let mut ch = anicraft_doc::Channel::default();
+    ch.set_key(0, Vec2::new(100.0, 0.0));
+    ch.set_key(10, Vec2::new(120.0, 10.0));
+    let tri = Shape {
+        path: Arc::new({
+            let mut p = anicraft_geom::Path::new();
+            p.move_to(Vec2::new(0.0, 0.0)).line_to(Vec2::new(100.0, 0.0)).line_to(Vec2::new(100.0, 50.0)).close();
+            p
+        }),
+        fill: None,
+        stroke: None,
+        fill_rule: anicraft_geom::FillRule::NonZero,
+        merge: false,
+        bind: Vec::new(),
+        points: vec![PointTrack { index: 1, position: ch }],
+        trim: None,
+        texture: Some(Box::new(TextureMap { bitmap: BitmapId(bmp_id), uv: vec![Vec2::new(0.0, 0.0), Vec2::new(2.0, 0.0), Vec2::new(2.0, 1.0)] })),
+    };
+    let tri_id = d.alloc_id();
+    let sound_id = d.alloc_id();
+    {
+        let tl = d.timeline_mut(0);
+        let last = Arc::make_mut(tl.layers.last_mut().unwrap());
+        Arc::make_mut(&mut last.keyframes[0]).elements.push(Arc::new(Element { id: ElementId(tri_id), name: String::new(), transform: anicraft_geom::Affine::IDENTITY, color: Default::default(), kind: ElementKind::Shape(tri) }));
+        let first = Arc::make_mut(&mut tl.layers[0]);
+        first.physics = Some(PhysicsBody { static_body: false, friction: 0.2, restitution: 0.7, velocity: Vec2::new(5.0, 0.0) });
+        Arc::make_mut(&mut first.keyframes[0]).sound = Some(FrameSound { sound: SoundId(sound_id), sync: SoundSync::Stream, repeat: 1, looping: false, effect: Default::default() });
+    }
+    Arc::make_mut(&mut d.scenes[0]).physics = Some(PhysicsWorld { gravity: Vec2::new(0.0, 3200.0), wind: Vec2::new(10.0, 0.0) });
+    d.sounds.push(Arc::new(Sound::from_data(SoundId(sound_id), "boom", tiny_wav_bytes()).unwrap()));
+    let back = format::from_json(&format::to_json(&d).unwrap()).unwrap();
+    assert_eq!(d, back, "texture pin, physics and sound survive save/load whole");
+    assert_eq!(back.sounds[0].frames, 4);
+}
+
+/// A tiny silent WAV (16-bit mono PCM, 8000 Hz, four samples).
+fn tiny_wav_bytes() -> Vec<u8> {
+    let data = [0u8; 8];
+    let mut out = Vec::new();
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&8000u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    out
 }
 
 /// Adversarial params for every command: must return Ok or Err, never panic.
@@ -1809,33 +1880,26 @@ fn symbol_type_and_graphic_looping_commands() {
 }
 
 #[test]
-fn video_export_streams_frames_to_ffmpeg_or_explains_how_to_get_it() {
+fn video_export_encodes_webm_and_mp4_without_ffmpeg() {
     let dir = std::env::temp_dir().join(format!("anicraft-video-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut s = Session::new(sample::demo());
-    // Without ffmpeg: a clear message, no file.
-    let missing = dir.join("none.webm");
-    let e = s.execute("file.export_video", &json!({"path": missing.display().to_string(), "ffmpeg": dir.join("no-such-ffmpeg").display().to_string(), "to": 2, "scale": 0.1})).unwrap_err();
-    assert!(e.to_string().contains("ffmpeg"), "{e}");
-    assert!(!missing.exists());
     assert!(s.execute("file.export_video", &json!({"path": dir.join("x.avi").display().to_string()})).is_err(), "only .mp4 and .webm");
-    // With an ffmpeg (on the PATH or in ANICRAFT_FFMPEG), real files; skipped where there is none.
-    let program = std::env::var("ANICRAFT_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
-    let have = std::process::Command::new(&program).arg("-version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|st| st.success());
-    if !have {
-        eprintln!("no ffmpeg here: only the missing-ffmpeg path was tested");
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
-    }
-    for (name, magic_at, magic) in [("clip.webm", 0usize, &[0x1A, 0x45, 0xDF, 0xA3][..]), ("clip.mp4", 4, b"ftyp")] {
+    // Both containers come out of AniCraft's own VP9+Opus encoders: no external encoder runs.
+    for (name, magic_at, magic, codec) in [
+        ("clip.webm", 0usize, &b"\x1aE\xdf\xa3"[..], &b"V_VP9"[..]),
+        ("clip.mp4", 4, b"ftyp", b"vp09"),
+    ] {
         let out = dir.join(name);
         let _ = std::fs::remove_file(&out);
-        // Scale 0.1 makes a 128×72 picture; 0.105 an odd 134×76 → padded to even.
+        // Scale 0.105 makes an odd 134×76 picture → padded to even.
         let v = run(&mut s, "file.export_video", json!({"path": out.display().to_string(), "from": 0, "to": 5, "scale": 0.105}));
         assert_eq!(v["frames"], 6, "{name}");
+        assert_eq!(v["encoder"], "vp9", "{name}");
         let bytes = std::fs::read(&out).unwrap();
         assert!(bytes.len() > 200, "{name}: {} bytes", bytes.len());
         assert_eq!(&bytes[magic_at..magic_at + magic.len()], magic, "{name} container");
+        assert!(bytes.windows(codec.len()).any(|w| w == codec), "{name} carries VP9");
         // Replacing it needs consent.
         assert!(s.execute("file.export_video", &json!({"path": out.display().to_string(), "to": 1, "scale": 0.1})).is_err());
     }

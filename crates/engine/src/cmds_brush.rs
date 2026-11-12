@@ -158,7 +158,7 @@ fn draw_brush(s: &mut Session, p: &Value) -> Result<Value> {
         name: String::new(),
         transform: Affine::translate(c.x, c.y),
         color: ColorEffect::default(),
-        kind: ElementKind::Shape(Shape { path: Arc::new(path.transformed(&Affine::translate(-c.x, -c.y))), fill: Some(Paint::Solid(color)), stroke: None, fill_rule: FillRule::EvenOdd, merge: !object, bind: Vec::new(), points: Vec::new(), trim: None }),
+        kind: ElementKind::Shape(Shape { path: Arc::new(path.transformed(&Affine::translate(-c.x, -c.y))), fill: Some(Paint::Solid(color)), stroke: None, fill_rule: FillRule::EvenOdd, merge: !object, bind: Vec::new(), points: Vec::new(), trim: None, texture: None }),
     };
     if s.editable_keyframe()?.elements.len() >= 100_000 {
         return Err(EngineError::State("too many elements on this keyframe".into()));

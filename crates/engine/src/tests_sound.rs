@@ -200,16 +200,10 @@ fn settings_removal_deletion_and_import_to_stage() {
 
 #[test]
 fn video_export_carries_the_soundtrack() {
-    let program = std::env::var("ANICRAFT_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
-    let have = std::process::Command::new(&program).arg("-version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|st| st.success());
-    if !have {
-        eprintln!("no ffmpeg here: video soundtrack not tested");
-        return;
-    }
     let dir = temp_dir("video");
     let (mut s, id) = session_with_sound(&dir);
     run(&mut s, "sound.place", json!({"sound": id, "frame": 0, "extend": true}));
-    for (name, codec) in [("a.webm", &b"A_OPUS"[..]), ("a.mp4", b"mp4a")] {
+    for (name, codec) in [("a.webm", &b"A_OPUS"[..]), ("a.mp4", b"opus")] {
         let out = dir.join(name);
         let v = run(&mut s, "file.export_video", json!({"path": out.display().to_string(), "scale": 0.05}));
         assert_eq!(v["audio"], true);
