@@ -24,3 +24,4 @@ has to renumber because another PR merged first.
 |---|---|---|
 | 0037 | #38 (outside contribution) | Interface languages |
 | 0107 | stage7/exits-longtail | Built-in encoders, the Chinese interface and the Moho package export (fork stage 7) |
+| 0108 | fix/moho-group-masking | Moho group masking and the drawn mask (the corpus audit's mask gap) |

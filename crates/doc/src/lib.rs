@@ -957,6 +957,11 @@ pub struct Layer {
     /// keeps the layer out of the simulation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub physics: Option<PhysicsBody>,
+    /// The mask also draws itself, beneath the layers it masks (Moho's "+ Add to mask",
+    /// ADR 0108): an eye white shows, and the pupil above it is visible only inside it.
+    /// Off — the AniCraft default — the mask's fills are invisible and only clip.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mask_draws: bool,
 }
 
 fn is_zero2(v: &Vec2) -> bool {
@@ -1059,6 +1064,7 @@ impl Layer {
             switch_to: Channel::default(),
             armature: None,
             physics: None,
+            mask_draws: false,
         }
     }
     /// Whether any transform channel holds keys (or the pivot moved): the layer moves by

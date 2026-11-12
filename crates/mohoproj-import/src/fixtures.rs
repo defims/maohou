@@ -308,6 +308,23 @@ fn keyframes_layer_channels_match_moho_runtime_per_frame() {
     assert_eq!(checked, 31, "every probed frame compared");
 }
 
+/// keyframes-camera.moho carries the corpus's group-masking idiom (ADR 0108): the Eyes
+/// group hides its members (Moho `group_mask` 2) and the eye-white layer adds itself to
+/// the mask (`masking` 2 = MM_ADD_MASK: it draws itself and defines the region), with the
+/// pupil masked by it. The full render gate lives in the CLI's mask_render_gate.rs.
+#[test]
+fn group_mask_imports_as_a_drawing_mask() {
+    let Some(path) = fixture("keyframes-camera") else { return missing_corpus() };
+    let (doc, report) = import_path(&path).unwrap_or_else(|e| panic!("keyframes-camera.moho: {e}"));
+    assert!(!report.skipped.iter().any(|(k, _)| k.contains("mask")), "{:?}", report.skipped);
+    let tl = doc.timeline(0);
+    let mask = tl.layers.iter().find(|l| l.kind == anicraft_doc::LayerKind::Mask).expect("the eye white imports as the mask");
+    assert_eq!(mask.name, "Eyes");
+    assert!(mask.mask_draws, "Moho's add-to-mask member draws itself");
+    let pupil = tl.layers.iter().find(|l| l.name == "Pupil").expect("the pupil");
+    assert_eq!(pupil.parent, Some(mask.id), "the pupil is the mask's child");
+}
+
 /// physics-drop.moho (Moho Pro 14.4, CASES #20): Moho's real physics configuration —
 /// the world on a BoneLayer (gravity direction channel 4.712389 rad = 270° down,
 /// strength 0 default) holding a filled Polygon body whose physics.enabled is on.

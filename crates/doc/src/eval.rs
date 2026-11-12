@@ -601,182 +601,208 @@ fn eval_layers(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, range: std::
         } else {
             None
         };
-        for el in elements.iter() {
-            // In the player, a symbol instance has its own path, and maybe properties a script set.
-            let child = match (&el.kind, walk.play) {
-                (ElementKind::Symbol { .. }, Some(p)) => Some(p.child(el.id)),
-                // So is a dynamic or input text field (ADR 0066).
-                (ElementKind::Text(t), Some(p)) if t.field.is_some() => Some(p.child(el.id)),
-                _ => None,
-            };
-            let set;
-            let el: &Element = match child.as_ref().and_then(|c| c.state.props.get(&c.path)) {
-                Some(ov) if !ov.shown() => continue,
-                Some(ov) => {
-                    set = ov.apply(el);
-                    &set
-                }
-                None => el,
-            };
-            let (root_layer, root_el) = cx.root.unwrap_or((layer.id, el.id));
-            let xf = layer_xf.mul(&el.transform);
-            let fx = el.color.transform();
-            let color = cx.color.concat(&fx);
-            let group = layer_group.or(cx.group);
-            match &el.kind {
-                ElementKind::Shape(s) => {
-                    // Inside a 9-slice instance, the shape's outline is cut and mapped (bitmap
-                    // fills scale normally, as in Animate). A sliced shape takes the mapped
-                    // outline whole: the Moho point tracks, trims, texture pins and bone
-                    // binding below operate on whole (unsliced) artwork.
-                    let sliced = cx.slice.filter(|_| !matches!(s.fill, Some(Paint::Bitmap { .. }))).map(|sl| sliced_shape(s, &el.transform, &sl));
-                    let unsliced = sliced.is_none();
-                    let (path, xf, mut fill, stroke) = match sliced {
-                        Some(x) => x,
-                        None => (s.path.clone(), xf, s.fill.clone(), s.stroke.clone()),
-                    };
-                    let mut path = path;
-                    if unsliced {
-                        // Animated points rebuild the path at this frame, and an active trim
-                        // cuts each subpath to its arc (ADR 0105); a trimmed shape draws its
-                        // stroke, the fill of a cut-open ring not being a shape any more.
-                        if !s.points.is_empty()
-                            && let Some(np) = crate::points::rebuild(&path, &s.points, frame)
-                        {
-                            path = Arc::new(np);
-                        }
-                        // A texture-pinned fill (Moho's image warp; ADR 0106) always comes from
-                        // the pin: the fill matrix refits from the shape's points (deformed or
-                        // not) onto the pinned image coordinates, so the texture follows the
-                        // warp. A degenerate fit leaves the static fill.
-                        if let Some(tex) = &s.texture
-                            && let Some(paint) = crate::texture::paint_for(&path, tex)
-                        {
-                            fill = Some(paint);
-                        }
-                        if let Some(cut) = s.trim.as_ref().and_then(|t| crate::points::trim(&path, t, frame)) {
-                            path = Arc::new(cut);
-                            fill = None;
-                        }
+        // Moho's "+ Add to mask" (ADR 0108): a drawn mask evaluates twice — the clip pass
+        // as always, then its fills again as plain artwork — and the drawn copy moves back
+        // to the mask's own place in the paint order. The shadowed `masks` carries each
+        // pass's role into the unchanged body below.
+        let redraw = masks.is_some() && layer.mask_draws && cx.masks.is_none();
+        let passes: &[Option<u32>] = if redraw { &[masks, None] } else { &[masks] };
+        let mut drawn_start = out.items.len();
+        for (mask_pass, masks) in passes.iter().copied().enumerate() {
+            if mask_pass == 1 {
+                drawn_start = out.items.len();
+            }
+            for el in elements.iter() {
+                // In the player, a symbol instance has its own path, and maybe properties a script set.
+                let child = match (&el.kind, walk.play) {
+                    (ElementKind::Symbol { .. }, Some(p)) => Some(p.child(el.id)),
+                    // So is a dynamic or input text field (ADR 0066).
+                    (ElementKind::Text(t), Some(p)) if t.field.is_some() => Some(p.child(el.id)),
+                    _ => None,
+                };
+                let set;
+                let el: &Element = match child.as_ref().and_then(|c| c.state.props.get(&c.path)) {
+                    Some(ov) if !ov.shown() => continue,
+                    Some(ov) => {
+                        set = ov.apply(el);
+                        &set
                     }
-                    // Artwork bound to an enclosing bone layer's skeleton rides its bones
-                    // (ADR 0104): one full-weight bone composes its matrix into the
-                    // transform; several bones deform the path (linear blend skinning).
-                    let (path, xf) = if s.bind.is_empty() || !unsliced {
-                        (path, xf)
-                    } else {
-                        let skins = skin_of(tl, index, frame);
-                        match skins.as_deref() {
-                            Some(skins) => match s.bind.as_slice() {
-                                [(b, w)] if (*w - 1.0).abs() < 1e-3 => {
-                                    let m = skins.get(b.0 as usize).copied().unwrap_or(Affine::IDENTITY);
-                                    (path, layer_xf.mul(&m).mul(&el.transform))
+                    None => el,
+                };
+                let (root_layer, root_el) = cx.root.unwrap_or((layer.id, el.id));
+                let xf = layer_xf.mul(&el.transform);
+                let fx = el.color.transform();
+                let color = cx.color.concat(&fx);
+                let group = layer_group.or(cx.group);
+                match &el.kind {
+                    ElementKind::Shape(s) => {
+                        // Inside a 9-slice instance, the shape's outline is cut and mapped (bitmap
+                        // fills scale normally, as in Animate). A sliced shape takes the mapped
+                        // outline whole: the Moho point tracks, trims, texture pins and bone
+                        // binding below operate on whole (unsliced) artwork.
+                        let sliced = cx.slice.filter(|_| !matches!(s.fill, Some(Paint::Bitmap { .. }))).map(|sl| sliced_shape(s, &el.transform, &sl));
+                        let unsliced = sliced.is_none();
+                        let (path, xf, mut fill, stroke) = match sliced {
+                            Some(x) => x,
+                            None => (s.path.clone(), xf, s.fill.clone(), s.stroke.clone()),
+                        };
+                        let mut path = path;
+                        if unsliced {
+                            // Animated points rebuild the path at this frame, and an active trim
+                            // cuts each subpath to its arc (ADR 0105); a trimmed shape draws its
+                            // stroke, the fill of a cut-open ring not being a shape any more.
+                            if !s.points.is_empty()
+                                && let Some(np) = crate::points::rebuild(&path, &s.points, frame)
+                            {
+                                path = Arc::new(np);
+                            }
+                            // A texture-pinned fill (Moho's image warp; ADR 0106) always comes from
+                            // the pin: the fill matrix refits from the shape's points (deformed or
+                            // not) onto the pinned image coordinates, so the texture follows the
+                            // warp. A degenerate fit leaves the static fill.
+                            if let Some(tex) = &s.texture
+                                && let Some(paint) = crate::texture::paint_for(&path, tex)
+                            {
+                                fill = Some(paint);
+                            }
+                            if let Some(cut) = s.trim.as_ref().and_then(|t| crate::points::trim(&path, t, frame)) {
+                                path = Arc::new(cut);
+                                fill = None;
+                            }
+                        }
+                        // Artwork bound to an enclosing bone layer's skeleton rides its bones
+                        // (ADR 0104): one full-weight bone composes its matrix into the
+                        // transform; several bones deform the path (linear blend skinning).
+                        let (path, xf) = if s.bind.is_empty() || !unsliced {
+                            (path, xf)
+                        } else {
+                            let skins = skin_of(tl, index, frame);
+                            match skins.as_deref() {
+                                Some(skins) => match s.bind.as_slice() {
+                                    [(b, w)] if (*w - 1.0).abs() < 1e-3 => {
+                                        let m = skins.get(b.0 as usize).copied().unwrap_or(Affine::IDENTITY);
+                                        (path, layer_xf.mul(&m).mul(&el.transform))
+                                    }
+                                    binds => (Arc::new(deform_path(&path, skins, binds, &el.transform)), layer_xf),
+                                },
+                                None => (path, xf),
+                            }
+                        };
+                        let image = match &fill {
+                            Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
+                            _ => None,
+                        };
+                        let smooth = match &fill {
+                            Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).is_none_or(|b| b.smoothing),
+                            _ => true,
+                        };
+                        out.items.push(DisplayItem {
+                            path,
+                            transform: xf,
+                            fill,
+                            stroke: stroke.clone(),
+                            fill_rule: s.fill_rule,
+                            color,
+                            layer: root_layer,
+                            element: root_el,
+                            outline: layer_outline,
+                            clip,
+                            masks,
+                            guide,
+                            group,
+                            image,
+                            smooth,
+                        })
+                    }
+                    ElementKind::Text(t) => {
+                        let item = |path: Arc<Path>, transform: Affine, fill: Option<Paint>, stroke: Option<Stroke>, clip: Option<u32>, masks: Option<u32>| DisplayItem {
+                            path,
+                            transform,
+                            fill,
+                            stroke,
+                            fill_rule: FillRule::NonZero,
+                            color,
+                            layer: root_layer,
+                            element: root_el,
+                            outline: layer_outline,
+                            clip,
+                            masks,
+                            guide,
+                            group,
+                            image: None,
+                            smooth: true,
+                        };
+                        match &t.field {
+                            // Mask artwork: a field's text masks; its box and border don't.
+                            Some(f) if masks.is_none() => {
+                                let live = child.as_ref().map(|c| (c.state.fields.get(&c.path), c.state.focus.as_deref() == Some(c.path.as_slice())));
+                                field_items(t, f, live, xf, clip, out, item);
+                            }
+                            _ => {
+                                // The glyphs draw filled (a live field draws its edited look), and
+                                // a stroked text draws its outline over the fill, centred on the
+                                // glyph edge (Moho's text stroke; ADR 0105).
+                                let path = child.as_ref().and_then(|c| c.state.fields.get(&c.path)).and_then(|s| s.look.as_ref()).map_or_else(|| t.outline.clone(), |l| l.outline.clone());
+                                out.items.push(item(path, xf, Some(Paint::Solid(t.color)), None, clip, masks));
+                                if let Some(st) = &t.stroke {
+                                    out.items.push(item(t.outline.clone(), xf, None, Some(st.clone()), clip, masks));
                                 }
-                                binds => (Arc::new(deform_path(&path, skins, binds, &el.transform)), layer_xf),
-                            },
-                            None => (path, xf),
-                        }
-                    };
-                    let image = match &fill {
-                        Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).and_then(crate::Bitmap::pixels),
-                        _ => None,
-                    };
-                    let smooth = match &fill {
-                        Some(Paint::Bitmap { bitmap, .. }) => doc.bitmap(*bitmap).is_none_or(|b| b.smoothing),
-                        _ => true,
-                    };
-                    out.items.push(DisplayItem {
-                        path,
-                        transform: xf,
-                        fill,
-                        stroke: stroke.clone(),
-                        fill_rule: s.fill_rule,
-                        color,
-                        layer: root_layer,
-                        element: root_el,
-                        outline: layer_outline,
-                        clip,
-                        masks,
-                        guide,
-                        group,
-                        image,
-                        smooth,
-                    })
-                }
-                ElementKind::Text(t) => {
-                    let item = |path: Arc<Path>, transform: Affine, fill: Option<Paint>, stroke: Option<Stroke>, clip: Option<u32>, masks: Option<u32>| DisplayItem {
-                        path,
-                        transform,
-                        fill,
-                        stroke,
-                        fill_rule: FillRule::NonZero,
-                        color,
-                        layer: root_layer,
-                        element: root_el,
-                        outline: layer_outline,
-                        clip,
-                        masks,
-                        guide,
-                        group,
-                        image: None,
-                        smooth: true,
-                    };
-                    match &t.field {
-                        // Mask artwork: a field's text masks; its box and border don't.
-                        Some(f) if masks.is_none() => {
-                            let live = child.as_ref().map(|c| (c.state.fields.get(&c.path), c.state.focus.as_deref() == Some(c.path.as_slice())));
-                            field_items(t, f, live, xf, clip, out, item);
-                        }
-                        _ => {
-                            // The glyphs draw filled (a live field draws its edited look), and
-                            // a stroked text draws its outline over the fill, centred on the
-                            // glyph edge (Moho's text stroke; ADR 0105).
-                            let path = child.as_ref().and_then(|c| c.state.fields.get(&c.path)).and_then(|s| s.look.as_ref()).map_or_else(|| t.outline.clone(), |l| l.outline.clone());
-                            out.items.push(item(path, xf, Some(Paint::Solid(t.color)), None, clip, masks));
-                            if let Some(st) = &t.stroke {
-                                out.items.push(item(t.outline.clone(), xf, None, Some(st.clone()), clip, masks));
                             }
                         }
                     }
-                }
-                ElementKind::Camera => {}
-                ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, .. } => {
-                    let Some(sym) = doc.symbol(*symbol) else { continue };
-                    let len = sym.timeline.frame_count();
-                    let local = match (sym.kind, &child) {
-                        // A graphic keeps step with this timeline: loop mode and first frame apply.
-                        (SymbolKind::Graphic, _) => loop_mode.local_frame(frame.saturating_sub(kf_start), *first_frame, len),
-                        // In the player, movie clips and buttons are where it has them.
-                        (SymbolKind::MovieClip, Some(c)) => c.state.clip_frame(&c.path, len),
-                        (SymbolKind::Button, Some(c)) => c.state.button_frame(&c.path, len),
-                        // A movie clip plays its own timeline on a loop from when the instance
-                        // appeared, carrying on across keyframes that hold the same instance.
-                        (SymbolKind::MovieClip, None) => frame.saturating_sub(instance_start(layer, frame, el.id, *symbol)) % len.max(1),
-                        // While editing, a button shows its Up frame.
-                        (SymbolKind::Button, None) => 0,
-                    };
-                    // An instance below full opacity fades as one: its contents composite in a
-                    // group at full opacity, and the group blends at the instance's alpha. (Mask
-                    // artwork ignores opacity, so it never needs one.)
-                    // A blend mode composites the instance on its own too, then blends it.
-                    // An alpha offset (Advanced) changes each item's alpha on its own: it stays
-                    // in the items' transform, and the group (for a blend or filters) is opaque.
-                    let fade = fx.alpha_factor().unwrap_or(1.0);
-                    let (color, group) = if masks.is_none() && (fade < 1.0 - 1e-4 || !blend.is_normal() || !filters.is_empty()) {
-                        let gid = out.groups.len() as u32;
-                        out.groups.push(Group { parent: cx.group, alpha: fade, blend: *blend, filters: filters.iter().map(crate::Filter::sanitized).collect(), clip });
-                        let inner = if fx.alpha_factor().is_some() { fx.without_alpha() } else { fx };
-                        (cx.color.concat(&inner), Some(gid))
-                    } else {
-                        (color, group)
-                    };
-                    // A symbol with 9-slice guides, scaled: its shapes are sliced (ADR 0055).
-                    let slice = crate::nine_slice::slicing(doc, sym, &el.transform).map(|s| Slicing { post: layer_xf.mul(&s.post), ..s });
-                    let inner = Ctx { xf, folders: Affine::IDENTITY, immune: false, color, depth: cx.depth + 1, root: Some((root_layer, root_el)), outline: layer_outline, stage: cx.stage, clip, masks, guide, group, camera: None, slice, scene_view: Affine::IDENTITY };
-                    eval_timeline(doc, &sym.timeline, local, &inner, out, child.as_ref());
+                    ElementKind::Camera => {}
+                    ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, .. } => {
+                        let Some(sym) = doc.symbol(*symbol) else { continue };
+                        let len = sym.timeline.frame_count();
+                        let local = match (sym.kind, &child) {
+                            // A graphic keeps step with this timeline: loop mode and first frame apply.
+                            (SymbolKind::Graphic, _) => loop_mode.local_frame(frame.saturating_sub(kf_start), *first_frame, len),
+                            // In the player, movie clips and buttons are where it has them.
+                            (SymbolKind::MovieClip, Some(c)) => c.state.clip_frame(&c.path, len),
+                            (SymbolKind::Button, Some(c)) => c.state.button_frame(&c.path, len),
+                            // A movie clip plays its own timeline on a loop from when the instance
+                            // appeared, carrying on across keyframes that hold the same instance.
+                            (SymbolKind::MovieClip, None) => frame.saturating_sub(instance_start(layer, frame, el.id, *symbol)) % len.max(1),
+                            // While editing, a button shows its Up frame.
+                            (SymbolKind::Button, None) => 0,
+                        };
+                        // An instance below full opacity fades as one: its contents composite in a
+                        // group at full opacity, and the group blends at the instance's alpha. (Mask
+                        // artwork ignores opacity, so it never needs one.)
+                        // A blend mode composites the instance on its own too, then blends it.
+                        // An alpha offset (Advanced) changes each item's alpha on its own: it stays
+                        // in the items' transform, and the group (for a blend or filters) is opaque.
+                        let fade = fx.alpha_factor().unwrap_or(1.0);
+                        let (color, group) = if masks.is_none() && (fade < 1.0 - 1e-4 || !blend.is_normal() || !filters.is_empty()) {
+                            let gid = out.groups.len() as u32;
+                            out.groups.push(Group { parent: cx.group, alpha: fade, blend: *blend, filters: filters.iter().map(crate::Filter::sanitized).collect(), clip });
+                            let inner = if fx.alpha_factor().is_some() { fx.without_alpha() } else { fx };
+                            (cx.color.concat(&inner), Some(gid))
+                        } else {
+                            (color, group)
+                        };
+                        // A symbol with 9-slice guides, scaled: its shapes are sliced (ADR 0055).
+                        let slice = crate::nine_slice::slicing(doc, sym, &el.transform).map(|s| Slicing { post: layer_xf.mul(&s.post), ..s });
+                        let inner = Ctx { xf, folders: Affine::IDENTITY, immune: false, color, depth: cx.depth + 1, root: Some((root_layer, root_el)), outline: layer_outline, stage: cx.stage, clip, masks, guide, group, camera: None, slice, scene_view: Affine::IDENTITY };
+                        eval_timeline(doc, &sym.timeline, local, &inner, out, child.as_ref());
+                    }
                 }
             }
         }
+            if redraw && drawn_start < out.items.len()
+                // The drawn copy beneath the layers the mask clips: before their first
+                // item, which this bottom-up walk painted just before the mask itself.
+                // Without masked artwork the copy stays here — its own place in the paint
+                // order, above what the walk visited earlier. The clip pass stays where it
+                // is: renderers collect a clip's sources regardless of item order.
+                && let Some(under) = out
+                    .items
+                    .iter()
+                    .position(|it| tl.layer(it.layer).is_some_and(|l| l.parent == Some(layer.id)))
+            {
+                let drawn: Vec<DisplayItem> = out.items.drain(drawn_start..).collect();
+                out.items.splice(under..under, drawn);
+            }
     }
 }
 

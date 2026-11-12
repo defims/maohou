@@ -48,9 +48,22 @@ enum Content<'doc> {
 }
 
 /// What a layer inherits from its ancestors: where it sits in the tree (a container's
-/// children name it as their parent; evaluation chains its transform and effects).
+/// children name it as their parent; evaluation chains its transform and effects), whether
+/// it is a mask member of a masking group (it becomes the mask layer the group's clip
+/// forms from, drawing itself when the Moho member did), and whether a masking group with
+/// no region to show it (it doesn't).
+#[derive(Clone, Copy)]
 pub(crate) struct Inherit {
     pub parent: Option<LayerId>,
+    pub mask_clip: bool,
+    pub drawn: bool,
+    pub hidden: bool,
+}
+
+impl Inherit {
+    pub(crate) fn under(parent: Option<LayerId>) -> Self {
+        Self { parent, mask_clip: false, drawn: false, hidden: false }
+    }
 }
 
 /// Walks Moho's layer array (bottom-first) into `out` (top-first, containers first).
@@ -68,13 +81,95 @@ pub(crate) fn walk(b: &mut Builder, layers: &[Value], into: &Inherit, depth: usi
     }
 }
 
-fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out: &mut Vec<FlatLayer>) {
-    let ty = json::string(get(layer, "type")).unwrap_or_default();
+/// Moho's per-layer mask role (`masking`; the scripting API's MOHO.MM_* constants):
+/// 0 = masked (draws only in the group's mask region), 1 = not masked (draws everywhere),
+/// 2 = "+ Add to mask" (draws and defines the region), 3 = subtract from it, 4 = add but
+/// keep invisible, 5 = subtract but keep invisible, 6/7 = clear the mask, then add
+/// (drawn/invisible). Only a group whose `group_mask` is 2 applies it — the scripting API
+/// constants name the modes "0 = none, 1 = turn on masking, initially showing all
+/// sub-layers, 2 = … hiding all sub-layers"; mode 2 is the manual's "Hide all".
+fn mask_role(layer: &Value) -> i64 {
+    json::integer(get(layer, "masking")).unwrap_or(0).clamp(0, 7)
+}
+
+fn layer_type(layer: &Value) -> String {
+    json::string(get(layer, "type")).unwrap_or_default()
+}
+
+/// The leaf types whose artwork can form a mask (a group with bones or variants cannot sit
+/// under a mask in AniCraft's flat timeline: [`anicraft_doc::Timeline::repair_masks`]
+/// re-parents anything but a normal layer out of one).
+fn can_mask(layer: &Value) -> bool {
+    matches!(layer_type(layer).as_str(), "MeshLayer" | "ImageLayer" | "TextLayer")
+}
+
+/// A masking group (`group_mask` 2): Moho hides everything in the group until the mask
+/// members' fills say where the members may draw. AniCraft says exactly that with a mask
+/// layer and the masked members as its children, the mask first so the run stays unbroken
+/// (ADR 0108): a mask member that drew itself (roles 2/6) imports with `mask_draws`, an
+/// invisible one (4/7) clips alone. What has no slot is counted: past the first mask
+/// member extra ones don't reach the single clip, subtracting (3/5) cuts nothing, a mask
+/// role on a container or a content-less layer does nothing, and a container cannot sit
+/// under a mask. With no region at all Moho shows nothing, so the members import hidden.
+fn walk_masked_group(b: &mut Builder, kids: &[Value], into: &Inherit, depth: usize, out: &mut Vec<FlatLayer>) {
+    let add = |k: &Value| matches!(mask_role(k), 2 | 4 | 6 | 7);
+    let mut clip: Option<LayerId> = None;
+    let mut past_first = false;
+    for k in kids.iter().rev().filter(|k| add(k) && can_mask(k)) {
+        let as_mask = Inherit { parent: into.parent, mask_clip: true, drawn: matches!(mask_role(k), 2 | 6), hidden: false };
+        if let Some(id) = build_layer(b, k, &as_mask, depth, out) {
+            if clip.is_none() {
+                clip = Some(id);
+            } else {
+                past_first = true;
+            }
+        }
+    }
+    if past_first {
+        b.report.skip("mask layers past the first in a group (only the first clips)");
+    }
+    if kids.iter().any(|k| add(k) && !can_mask(k)) {
+        b.report.skip("mask roles on layers that cannot mask");
+    }
+    let subtracted = kids.iter().filter(|k| matches!(mask_role(k), 3 | 5)).count();
+    if subtracted > 0 {
+        b.report.skip("subtract-from-mask layers (nothing is subtracted)");
+    }
+    if kids.iter().any(|k| matches!(mask_role(k), 6 | 7)) {
+        b.report.skip("clear-mask mask members (the union acts as one mask)");
+    }
+    // Members: the masked ones (role 0) under the mask; the unmasked (1), the subtracting
+    // (3, drawn) and the ones without a clip to fall under draw beside it — a subtract
+    // that keeps invisible (5) hides itself as in Moho.
+    let hidden_group = clip.is_none() && subtracted == 0;
+    for k in kids.iter().rev().filter(|k| !add(k) || !can_mask(k)) {
+        let member_into = if mask_role(k) == 0 && is_container(k) {
+            if clip.is_some() {
+                b.report.skip("groups inside a masked group (they import unmasked)");
+            }
+            Inherit { hidden: hidden_group, ..*into }
+        } else if mask_role(k) == 5 {
+            Inherit { parent: into.parent, mask_clip: false, drawn: false, hidden: true }
+        } else if mask_role(k) == 0 && let Some(c) = clip {
+            Inherit { parent: Some(c), mask_clip: false, drawn: false, hidden: false }
+        } else {
+            Inherit { hidden: hidden_group, ..*into }
+        };
+        build_layer(b, k, &member_into, depth, out);
+    }
+}
+
+fn is_container(layer: &Value) -> bool {
+    matches!(layer_type(layer).as_str(), "GroupLayer" | "BoneLayer" | "SwitchLayer")
+}
+
+fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out: &mut Vec<FlatLayer>) -> Option<LayerId> {
+    let ty = layer_type(layer);
     let name = json::string(get(layer, "name")).unwrap_or_else(|| "Layer".into());
     let id = LayerId(b.doc.alloc_id());
     let mut l = Layer::new(id, name);
     l.parent = into.parent;
-    l.visible = layer_visibility(b, layer);
+    l.visible = layer_visibility(b, layer) && !into.hidden;
     // The layer's effect stack: opacity and the static filters (ADR 0103). Any layer kind
     // carries them in Moho.
     l.opacity = layer_opacity(b, layer);
@@ -119,18 +214,24 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
         world = layer_transform(b, layer);
     }
     match ty.as_str() {
-        "MeshLayer" => {
+        "MeshLayer" | "ImageLayer" | "TextLayer" => {
             count_layer_extras(b, layer);
-            let m = get(layer, "mesh").unwrap_or(&Value::Null);
-            finish_leaf(b, l, world, Content::Mesh(m), parent_bone(layer), out);
-        }
-        "ImageLayer" => {
-            count_layer_extras(b, layer);
-            finish_leaf(b, l, world, Content::Image(layer), parent_bone(layer), out);
-        }
-        "TextLayer" => {
-            count_layer_extras(b, layer);
-            finish_leaf(b, l, world, Content::Text(layer), parent_bone(layer), out);
+            // A mask member of a masking group becomes the mask itself: its fills clip the
+            // group's other members (walk_masked_group parents them), and draw beneath
+            // them when the Moho member drew itself (ADR 0108).
+            if into.mask_clip {
+                l.kind = LayerKind::Mask;
+                l.mask_draws = into.drawn;
+            }
+            match ty.as_str() {
+                "MeshLayer" => {
+                    let m = get(layer, "mesh").unwrap_or(&Value::Null);
+                    finish_leaf(b, l, world, Content::Mesh(m), parent_bone(layer), out);
+                }
+                "ImageLayer" => finish_leaf(b, l, world, Content::Image(layer), parent_bone(layer), out),
+                _ => finish_leaf(b, l, world, Content::Text(layer), parent_bone(layer), out),
+            }
+            return Some(id);
         }
         "GroupLayer" | "BoneLayer" | "SwitchLayer" => {
             l.kind = match ty.as_str() {
@@ -150,8 +251,15 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
             count_layer_extras(b, layer);
             out.push(FlatLayer { layer: l });
             let kids = array(get(layer, "layers")).unwrap_or(&[]);
-            let kids_into = Inherit { parent: Some(id) };
-            walk(b, kids, &kids_into, depth + 1, out);
+            let kids_into = Inherit::under(Some(id));
+            // Moho's group masking ("all invisible"): members draw only inside the mask
+            // members' region. Any other group mode (none, "all visible") draws everyone.
+            if json::integer(get(layer, "group_mask")).unwrap_or(0) == 2 {
+                walk_masked_group(b, kids, &kids_into, depth + 1, out);
+            } else {
+                walk(b, kids, &kids_into, depth + 1, out);
+            }
+            return Some(id);
         }
         "NoteLayer" => b.report.skip("note layers"),
         "ParticleLayer" => b.report.skip("particle layers"),
@@ -160,10 +268,12 @@ fn build_layer(b: &mut Builder, layer: &Value, into: &Inherit, depth: usize, out
             count_layer_extras(b, layer);
             audio::audio_layer(b, layer, &mut l);
             out.push(FlatLayer { layer: l });
+            return Some(id);
         }
         "" => b.report.skip("layers without a type"),
         other => b.report.skip(&format!("layers of unknown type ({other})")),
     }
+    None
 }
 
 /// The plain `visible` bool ANDs with the (channelled) visibility switch of the effect stack.
@@ -258,8 +368,8 @@ fn count_layer_extras(b: &mut Builder, layer: &Value) {
     if json::integer(get(layer, "timing_offset")).is_some_and(|i| i != 0) {
         b.report.skip("layer timing offsets");
     }
-    if json::integer(get(layer, "masking")).is_some_and(|m| m != 0) {
-        b.report.skip("mask layers (drawn unmasked)");
+    if json::boolean(get(layer, "mask_expansion")).unwrap_or(false) {
+        b.report.skip("mask expansion");
     }
     if json::integer(get(layer, "3d_mode")).is_some_and(|m| m != 0) {
         b.report.skip("3D layers");

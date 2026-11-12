@@ -137,6 +137,38 @@ fn mask_layers_clip_the_layers_they_mask() {
 }
 
 #[test]
+fn a_drawn_mask_draws_beneath_the_layers_it_masks() {
+    // Moho's "+ Add to mask" (ADR 0108): the mask's fills also draw, beneath the layers
+    // they clip — an eye white shows and the pupil above it stays visible inside it.
+    let mut d = mask_doc();
+    Arc::make_mut(&mut d.timeline_mut(0).layers[0]).mask_draws = true;
+    let dl = evaluate(&d, 0);
+    assert_eq!(dl.clip_parents, vec![None], "the clip itself is unchanged");
+    let mask_items: Vec<usize> = dl.items.iter().enumerate().filter(|(_, i)| i.element == ElementId(11)).map(|(i, _)| i).collect();
+    assert_eq!(mask_items.len(), 2, "the mask's artwork is there twice: the drawn copy and the clip pass");
+    let drawn = mask_items[0];
+    assert_eq!(dl.items[drawn].masks, None, "one pass draws");
+    assert_eq!(dl.items[mask_items[1]].masks, Some(0), "one pass forms the clip");
+    // The drawn copy paints before both masked layers (12 and 13), which the walk painted
+    // before the mask itself.
+    assert!(drawn < dl.items.iter().position(|i| i.element == ElementId(12)).unwrap());
+    assert!(drawn < dl.items.iter().position(|i| i.element == ElementId(13)).unwrap());
+    // Without masked artwork the copy stays at the mask's own place in the paint order:
+    // above what the walk visited before it, below the plain layer that comes after.
+    let mut childless = mask_doc();
+    {
+        let tl = childless.timeline_mut(0);
+        Arc::make_mut(&mut tl.layers[0]).mask_draws = true;
+        Arc::make_mut(&mut tl.layers[1]).parent = None;
+        Arc::make_mut(&mut tl.layers[2]).parent = None;
+    }
+    let dl = evaluate(&childless, 0);
+    let drawn = dl.items.iter().position(|i| i.element == ElementId(11)).unwrap();
+    assert!(dl.items[..drawn].iter().any(|i| i.element == ElementId(14)), "the childless drawn mask paints at its own place, above the layers before it");
+    assert_eq!(dl.items.iter().filter(|i| i.element == ElementId(11)).count(), 2);
+}
+
+#[test]
 fn masks_inside_symbols_nest_in_the_instance_clip() {
     // The main timeline's masked layer holds an instance of a symbol that has its own mask.
     let mut d = mask_doc();
